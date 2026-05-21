@@ -113,6 +113,43 @@ OLLAMA_URL       = "http://localhost:11434/api/generate"
 LLM_MAX_TOKENS   = 900
 LLM_TEMPERATURE  = 0.4
 
+# ── FBref scraping config ─────────────────────────────────────────────────────
+
+# comp_id + URL slug needed to build FBref league URLs.
+# URL pattern: fbref.com/en/comps/{comp_id}/{season}/{stat_slug}/{season}-{league_slug}-Stats
+FBREF_LEAGUE_URLS = {
+    "ITA-Serie A":                     {"comp_id": 11,     "league_slug": "Serie-A"},
+    "ENG-Premier League":              {"comp_id": 9,      "league_slug": "Premier-League"},
+    "GER-Bundesliga":                  {"comp_id": 20,     "league_slug": "Bundesliga"},
+    "ESP-La Liga":                     {"comp_id": 12,     "league_slug": "La-Liga"},
+    "FRA-Ligue 1":                     {"comp_id": 13,     "league_slug": "Ligue-1"},
+    "Big 5 European Leagues Combined": {"comp_id": "Big5", "league_slug": "Big-5-European-Leagues"},
+}
+
+# stat_type → URL path segment  (e.g. "standard" → ".../stats/...")
+STAT_TYPE_SLUGS = {
+    "standard":   "stats",
+    "shooting":   "shooting",
+    "passing":    "passing",
+    "defense":    "defense",
+    "possession": "possession",
+    "misc":       "misc",
+    "keeper":     "keepers",
+}
+
+# stat_type → HTML table-id key used by FBref
+# Squad table id:  stats_squads_{key}_for
+# Player table id: stats_{key}
+STAT_TYPE_TABLE_KEYS = {
+    "standard":   "standard",
+    "shooting":   "shooting",
+    "passing":    "passing",
+    "defense":    "defense",
+    "possession": "possession",
+    "misc":       "misc",
+    "keeper":     "keeper",
+}
+
 # ── Cache ─────────────────────────────────────────────────────────────────────
 
 DATA_DIR         = "data"

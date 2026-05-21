@@ -1,0 +1,28 @@
+# Data cache (scraped, heavy, non da versionare)
+data/
+downloaded_files/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Conda / venv
+.env
+env/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.code-workspace
+
+# Debug
+test.py
