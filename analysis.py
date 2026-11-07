@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import config
 import metrics
 
 TERTILE_LABELS = ["Basso", "Medio", "Alto"]
@@ -202,3 +203,261 @@ def shot_zones(shots: pd.DataFrame) -> dict[str, float]:
         "Da palla inattiva": s.loc[set_piece, "xg"].sum() / total * 100,
         "Di testa": s.loc[header, "xg"].sum() / total * 100,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Level 3 — players: roles, role fit, mismatch, weak links, key players
+# ══════════════════════════════════════════════════════════════════════════════
+
+# metric id → (label, numerator key, denominator key, kind[, "low"])
+#   kind "p90": numerator per 90 minutes · "pct": 100 * numerator / denominator
+#   "low" marks lower-is-better metrics (inverted in percentiles)
+PLAYER_METRICS: dict[str, tuple] = {
+    "goals":           ("Gol/90",                        "goals",                      None,                      "p90"),
+    "xg":              ("xG/90",                         "expected_goals",             None,                      "p90"),
+    "xa":              ("xA/90",                         "expected_assists",           None,                      "p90"),
+    "shots":           ("Tiri/90",                       "total_shots",                None,                      "p90"),
+    "chances":         ("Occasioni create/90",           "chances_created",            None,                      "p90"),
+    "final_third":     ("Passaggi nell'ultimo terzo/90", "passes_into_final_third",    None,                      "p90"),
+    "pass_pct":        ("Precisione passaggi %",         "accurate_passes",            "accurate_passes_att",     "pct"),
+    "long_balls":      ("Lanci lunghi riusciti/90",      "long_balls_accurate",        None,                      "p90"),
+    "long_ball_pct":   ("Precisione lanci lunghi %",     "long_balls_accurate",        "long_balls_accurate_att", "pct"),
+    "crosses":         ("Cross riusciti/90",             "accurate_crosses",           None,                      "p90"),
+    "dribbles":        ("Dribbling riusciti/90",         "dribbles_succeeded",         None,                      "p90"),
+    "box_touches":     ("Tocchi in area avversaria/90",  "touches_opp_box",            None,                      "p90"),
+    "touches":         ("Tocchi/90",                     "touches",                    None,                      "p90"),
+    "tackles":         ("Contrasti/90",                  "matchstats.headers.tackles", None,                      "p90"),
+    "interceptions":   ("Intercetti/90",                 "interceptions",              None,                      "p90"),
+    "recoveries":      ("Palloni recuperati/90",         "recoveries",                 None,                      "p90"),
+    "clearances":      ("Respinte/90",                   "clearances",                 None,                      "p90"),
+    "aerials":         ("Duelli aerei vinti/90",         "aerials_won",                None,                      "p90"),
+    "aerial_pct":      ("Duelli aerei vinti %",          "aerials_won",                "aerials_won_att",         "pct"),
+    "ground_pct":      ("Duelli a terra vinti %",        "ground_duels_won",           "ground_duels_won_att",    "pct"),
+    "dribbled_past":   ("Volte saltato/90",              "dribbled_past",              None,                      "p90", "low"),
+    "dispossessed":    ("Palloni persi/90",              "dispossessed",               None,                      "p90", "low"),
+    "fouls":           ("Falli commessi/90",             "fouls",                      None,                      "p90", "low"),
+    "saves":           ("Parate/90",                     "saves",                      None,                      "p90"),
+    "goals_prevented": ("Gol evitati/90",                "goals_prevented",            None,                      "p90"),
+    "save_pct":        ("Parate %",                      "saves",                      "_on_target_faced",        "pct"),
+}
+
+ROLES = list(config.ROLE_PROFILES)
+# Near-identical roles share a family: an "alternative role" must change family
+ROLE_FAMILY = {
+    "Portiere": "gk",
+    "Difensore centrale": "cb",
+    "Terzino": "fullback", "Esterno a tutta fascia": "fullback",
+    "Mediano": "cm", "Centrocampista centrale": "cm",
+    "Esterno di centrocampo": "wide", "Ala": "wide",
+    "Trequartista": "am",
+    "Punta": "fw", "Centravanti": "fw",
+}
+_USUAL_FALLBACK = {0: "Portiere", 1: "Difensore centrale", 2: "Centrocampista centrale", 3: "Centravanti"}
+
+
+def _parse_formation(formation) -> list[int] | None:
+    try:
+        lines = [int(x) for x in str(formation).split("-")]
+    except ValueError:
+        return None
+    return lines if sum(lines) == 10 and len(lines) >= 2 else None
+
+
+def _line_roles(lines: list[int]) -> list[list[str]]:
+    """Role for each slot (sorted by lateral position) of each outfield line."""
+    k = len(lines) - 1
+    out = []
+    for i, n in enumerate(lines):
+        slots = []
+        for j in range(n):
+            extreme = j in (0, n - 1) and n > 1
+            if i == 0:
+                role = ("Esterno a tutta fascia" if n >= 5 and extreme
+                        else "Terzino" if n == 4 and extreme else "Difensore centrale")
+            elif i == k:
+                role = ("Ala" if n >= 3 and extreme
+                        else "Centravanti" if n in (1, 3) else "Punta")
+            elif n >= 4 and extreme:
+                role = ("Esterno a tutta fascia" if lines[0] == 3 and i == 1
+                        else "Ala" if i == k - 1 and i > 1 else "Esterno di centrocampo")
+            elif i < k - 1:  # another midfield line follows: holding line
+                centrals = n - (2 if n >= 4 else 0)
+                role = "Mediano" if centrals <= 2 else "Centrocampista centrale"
+            elif i > 1:      # attacking-midfield line
+                role = "Ala" if n == 3 and extreme else "Trequartista"
+            else:            # single midfield line
+                role = "Centrocampista centrale"
+            slots.append(role)
+        out.append(slots)
+    return out
+
+
+def assign_roles(apps: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add 'role' to every appearance. Starters: formation + FotMob positionId
+    (line = order of sorted positionIds, side = positionId % 10). Substitutes
+    and unparseable lineups: the player's most-played starting role, else a
+    fallback from FotMob's usual position.
+    """
+    apps = apps.copy()
+    apps["role"] = None
+    gk = apps["is_gk"].astype(bool)
+    apps.loc[gk & apps["started"], "role"] = "Portiere"
+
+    starters = apps[apps["started"] & ~gk & apps["position_id"].notna()]
+    for _, grp in starters.groupby(["match_id", "team_id"]):
+        lines = _parse_formation(grp["formation"].iloc[0])
+        if not lines or len(grp) != 10:
+            continue
+        roles = _line_roles(lines)
+        g = grp.assign(pid=grp["position_id"].astype(int)).sort_values("pid")
+        start = 0
+        for i, n in enumerate(lines):
+            line = g.iloc[start:start + n]
+            line = line.assign(lat=line["pid"] % 10).sort_values("lat")
+            for idx, role in zip(line.index, roles[i]):
+                apps.at[idx, "role"] = role
+            start += n
+
+    mins = apps["minutes_played"].fillna(0) if "minutes_played" in apps else pd.Series(0, index=apps.index)
+    known = apps[apps["role"].notna()].assign(_m=mins)
+    main_role = (known.groupby(["player_id", "role"])["_m"].sum().reset_index()
+                 .sort_values("_m").drop_duplicates("player_id", keep="last")
+                 .set_index("player_id")["role"])
+    apps["role"] = (apps["role"].fillna(apps["player_id"].map(main_role))
+                    .fillna(apps["usual_position"].map(_USUAL_FALLBACK)))
+    apps.loc[gk, "role"] = "Portiere"
+    return apps
+
+
+def player_season_table(apps: pd.DataFrame) -> pd.DataFrame:
+    """
+    One row per player and team: minutes, apps, starts, main role (by
+    minutes), minutes-weighted FotMob rating, and every PLAYER_METRICS value.
+    """
+    if apps is None or apps.empty:
+        return pd.DataFrame()
+    a = assign_roles(apps)
+    a["minutes_played"] = a["minutes_played"].fillna(0)
+    if {"saves", "goals_conceded"}.issubset(a.columns):
+        a["_on_target_faced"] = a["saves"].fillna(0) + a["goals_conceded"].fillna(0)
+
+    keys = sorted(({s[1] for s in PLAYER_METRICS.values()}
+                   | {s[2] for s in PLAYER_METRICS.values() if s[2]}) & set(a.columns))
+    by = ["player_id", "player", "team"]
+    sums = a.groupby(by)[keys + ["minutes_played"]].sum(min_count=1)
+    out = a.groupby(by).agg(apps=("match_id", "nunique"), starts=("started", "sum"))
+    out["minutes"] = sums["minutes_played"]
+    out["role"] = (a.groupby(by + ["role"])["minutes_played"].sum().reset_index()
+                   .sort_values("minutes_played").drop_duplicates(by, keep="last")
+                   .set_index(by)["role"])
+    if "rating_title" in a.columns:
+        rated = a[a["rating_title"].notna()]
+        out["rating"] = ((rated["rating_title"] * rated["minutes_played"]).groupby([rated[c] for c in by]).sum()
+                         / rated.groupby(by)["minutes_played"].sum().replace(0, np.nan))
+
+    m90 = (sums["minutes_played"] / 90).replace(0, np.nan)
+    for mid, spec in PLAYER_METRICS.items():
+        num, den, kind = spec[1], spec[2], spec[3]
+        if num not in sums:
+            continue
+        if kind == "p90":
+            out[mid] = sums[num] / m90
+        elif den in sums:
+            out[mid] = 100 * sums[num] / sums[den].replace(0, np.nan)
+    return out.reset_index()
+
+
+def _pct_rank(values: pd.Series, x, lower_better: bool) -> float:
+    v = values.dropna()
+    if v.empty or pd.isna(x):
+        return np.nan
+    p = (v < x).mean() * 100 + (v == x).mean() * 50
+    return 100 - p if lower_better else p
+
+
+def role_pool(role: str, table: pd.DataFrame) -> pd.DataFrame:
+    return table[(table["role"] == role) & (table["minutes"] >= config.PLAYER_MIN_MINUTES)]
+
+
+def role_fit(player: pd.Series, role: str, table: pd.DataFrame) -> tuple[float, pd.DataFrame]:
+    """
+    Weighted mean percentile of *player* against league players whose main
+    role is *role* (≥ PLAYER_MIN_MINUTES). Returns (score 0–100, detail).
+    """
+    pool = role_pool(role, table)
+    if len(pool) < config.ROLE_MIN_POOL:
+        return np.nan, pd.DataFrame()
+    rows = []
+    for mid, w in config.ROLE_PROFILES[role].items():
+        if mid not in table.columns or mid not in PLAYER_METRICS:
+            continue
+        spec = PLAYER_METRICS[mid]
+        low = len(spec) > 4 and spec[4] == "low"
+        rows.append({
+            "metric": mid, "Metrica": spec[0], "Valore": player.get(mid),
+            "Mediana ruolo": pool[mid].median(),
+            "Percentile": _pct_rank(pool[mid], player.get(mid), low), "Peso": w,
+        })
+    d = pd.DataFrame(rows).dropna(subset=["Percentile"])
+    if d.empty:
+        return np.nan, d
+    return float(np.average(d["Percentile"], weights=d["Peso"])), d
+
+
+def team_player_report(team: str, table: pd.DataFrame) -> pd.DataFrame:
+    """
+    For every player of *team* with enough minutes: fit in the main role,
+    best alternative role (mismatch) and weak-link flag.
+    """
+    t = table[(table["team"] == team) & (table["minutes"] >= config.PLAYER_MIN_MINUTES)]
+    rows = []
+    for _, p in t.iterrows():
+        fit, _ = role_fit(p, p["role"], table)
+        best_role, best_fit = None, np.nan
+        family = ROLE_FAMILY.get(p["role"])
+        candidates = [] if p["role"] == "Portiere" else [
+            r for r in ROLES if r != "Portiere" and ROLE_FAMILY.get(r) != family]
+        for r in candidates:
+            f_alt, _ = role_fit(p, r, table)
+            if not np.isnan(f_alt) and (np.isnan(best_fit) or f_alt > best_fit):
+                best_role, best_fit = r, f_alt
+        rows.append({
+            "player_id": p["player_id"], "Giocatore": p["player"], "Ruolo": p["role"],
+            "Minuti": int(p["minutes"]), "Presenze": int(p["apps"]), "Da titolare": int(p["starts"]),
+            "Voto medio FotMob": p.get("rating"), "Idoneità al ruolo": fit,
+            "Ruolo alternativo": best_role, "Idoneità alternativa": best_fit,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df["Profilo più vicino ad altro ruolo"] = (df["Idoneità alternativa"] - df["Idoneità al ruolo"]) >= 15
+    df["Anello debole"] = df["Idoneità al ruolo"] < 30
+    return df.sort_values("Minuti", ascending=False).reset_index(drop=True)
+
+
+def on_off_impact(team_matches: pd.DataFrame, apps: pd.DataFrame, team: str,
+                  min_each: int = 2) -> pd.DataFrame:
+    """
+    'Remove-one' proxy: team xG difference and points per match with the
+    player in the starting XI vs without. Needs ≥ min_each matches each side.
+    Correlation, not causation: opponents and other absences differ too.
+    """
+    ta = apps[(apps["team"] == team) & apps["started"]]
+    played = set(team_matches["match_id"])
+    rows = []
+    for (pid, name), g in ta.groupby(["player_id", "player"]):
+        on_ids = set(g["match_id"]) & played
+        on = team_matches[team_matches["match_id"].isin(on_ids)]
+        off = team_matches[~team_matches["match_id"].isin(on_ids)]
+        if len(on) < min_each or len(off) < min_each:
+            continue
+        s_on, s_off = metrics.summarize(on), metrics.summarize(off)
+        rows.append({
+            "player_id": pid, "Giocatore": name, "Da titolare": len(on), "Senza": len(off),
+            "Diff. xG con": s_on["xg_diff_pm"], "Diff. xG senza": s_off["xg_diff_pm"],
+            "Impatto xG/partita": s_on["xg_diff_pm"] - s_off["xg_diff_pm"],
+            "Punti/partita con": s_on["ppg"], "Punti/partita senza": s_off["ppg"],
+        })
+    df = pd.DataFrame(rows)
+    return df.sort_values("Impatto xG/partita", ascending=False).reset_index(drop=True) if not df.empty else df

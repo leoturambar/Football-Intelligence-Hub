@@ -471,12 +471,145 @@ with tab_avversario:
 
 # ── Tab Giocatore ─────────────────────────────────────────────────────────────
 
-with tab_giocatore:
-    st.header("Analisi giocatore")
-    st.info(
-        "Coming soon — role fit scoring, position mismatch detection, weak link analysis.",
-        icon="👤",
+@st.cache_data(show_spinner="Elaborazione statistiche giocatori…")
+def _player_data(league_id: int, season: str | None, n_matches: int):
+    """(appearances, season table) — n_matches only keys the cache."""
+    apps = dl.load_league_player_appearances(league_id, season)
+    return apps, analysis.player_season_table(apps)
+
+
+def _render_giocatore() -> None:
+    st.header(f"Analisi giocatori — {team}")
+
+    try:
+        missing = dl.fotmob_missing_match_ids(league_id, season)
+        n_done = len(dl.fotmob_finished_match_ids(league_id, season))
+    except Exception as e:
+        _show_load_error("il calendario", e)
+        return
+
+    if missing:
+        est = max(1, round(len(missing) * (config.FOTMOB_REQUEST_DELAY + 0.6) / 60))
+        st.info(
+            f"Per confrontare i giocatori con il resto del campionato servono i dati di "
+            f"tutte le partite giocate. Mancano **{len(missing)} partite** "
+            f"(circa {est} min la prima volta, poi restano in cache).",
+            icon="⬇️",
+        )
+        if not st.button("Scarica dati del campionato", type="primary"):
+            return
+        bar = st.progress(0.0, text="Download partite…")
+        try:
+            dl.load_league_player_appearances(
+                league_id, season,
+                progress=lambda i, n: bar.progress(i / n, text=f"Download partite… {i}/{n}"),
+            )
+        except Exception as e:
+            _show_load_error("le partite del campionato", e)
+            return
+        bar.empty()
+
+    apps, table = _player_data(league_id, season, n_done)
+    if table.empty:
+        st.info("Nessun dato giocatori disponibile.", icon="👤")
+        return
+
+    report = analysis.team_player_report(team, table)
+    st.caption(
+        f"Giocatori con almeno {config.PLAYER_MIN_MINUTES} minuti. Idoneità = percentile medio "
+        f"pesato rispetto ai pari ruolo del campionato (0–100, 50 = nella media). "
+        f"Ruoli dedotti da modulo e posizione in campo di FotMob."
     )
+    if report.empty:
+        st.info("Nessun giocatore ha ancora abbastanza minuti.", icon="⏱️")
+        return
+
+    # ── Squad table ───────────────────────────────────────────────────────────
+    st.subheader("Rosa e idoneità al ruolo")
+    show = report.drop(columns=["player_id"]).copy()
+    show["Profilo più vicino ad altro ruolo"] = show["Profilo più vicino ad altro ruolo"].map({True: "sì", False: ""})
+    show["Anello debole"] = show["Anello debole"].map({True: "⚠️", False: ""})
+    st.dataframe(
+        show, hide_index=True, use_container_width=True,
+        column_config={
+            "Idoneità al ruolo": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
+            "Idoneità alternativa": st.column_config.NumberColumn(format="%.0f"),
+            "Voto medio FotMob": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+    weak = report[report["Anello debole"]]
+    shift = report[report["Profilo più vicino ad altro ruolo"]]
+    cw, cs = st.columns(2)
+    with cw:
+        st.markdown("**Anelli deboli** (idoneità sotto 30)")
+        for _, r in weak.iterrows():
+            st.markdown(f"- {r['Giocatore']} ({r['Ruolo'].lower()}): {r['Idoneità al ruolo']:.0f}/100")
+        if weak.empty:
+            st.caption("Nessun titolare sotto la soglia.")
+    with cs:
+        st.markdown("**Profilo statistico più vicino a un altro ruolo**")
+        for _, r in shift.iterrows():
+            st.markdown(
+                f"- {r['Giocatore']}: {r['Ruolo'].lower()} {r['Idoneità al ruolo']:.0f} → "
+                f"{r['Ruolo alternativo'].lower()} {r['Idoneità alternativa']:.0f}"
+            )
+        if shift.empty:
+            st.caption("Nessuno: ognuno rende meglio nel proprio ruolo.")
+        else:
+            st.caption("Indica somiglianza di numeri, non un consiglio tattico: va letto con il contesto.")
+
+    # ── Key players (on/off) ──────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Giocatori chiave — la squadra con e senza")
+    try:
+        matches = dl.load_team_match_table(league_id, season, team)
+    except Exception as e:
+        _show_load_error("le partite della squadra", e)
+        return
+    onoff = analysis.on_off_impact(matches, apps, team)
+    if onoff.empty:
+        st.info("Servono almeno 2 partite con e 2 senza il giocatore titolare.", icon="📏")
+    else:
+        st.caption(
+            "Differenza xG per partita della squadra con il giocatore titolare e senza. "
+            "È una correlazione, non una causa: cambiano anche avversari e altre assenze. "
+            "Con meno di 3 partite da un lato il dato è aneddotico."
+        )
+        st.dataframe(
+            onoff.drop(columns=["player_id"]), hide_index=True, use_container_width=True,
+            column_config={c: st.column_config.NumberColumn(format="%+.2f" if "xG" in c else "%.2f")
+                           for c in onoff.columns if c not in ("Giocatore", "Da titolare", "Senza", "player_id")},
+        )
+
+    # ── Player detail ─────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Dettaglio giocatore")
+    name = st.selectbox("Giocatore", report["Giocatore"].tolist(), key=f"player_{team}_{season}")
+    row = report[report["Giocatore"] == name].iloc[0]
+    p = table[table["player_id"] == row["player_id"]].iloc[0]
+    roles_for_player = ["Portiere"] if p["role"] == "Portiere" else [r for r in analysis.ROLES if r != "Portiere"]
+    default_alt = row["Ruolo alternativo"] if isinstance(row["Ruolo alternativo"], str) else p["role"]
+    c1, c2 = st.columns(2)
+    with c1:
+        fit, detail = analysis.role_fit(p, p["role"], table)
+        st.markdown(f"**Nel suo ruolo: {p['role'].lower()}** — idoneità "
+                    f"{'n/d' if pd.isna(fit) else f'{fit:.0f}/100'}")
+        st.pyplot(viz.plot_role_percentiles(detail, title=p["role"]), use_container_width=True)
+    with c2:
+        alt = st.selectbox("Confronta con il ruolo", roles_for_player,
+                           index=roles_for_player.index(default_alt) if default_alt in roles_for_player else 0,
+                           key=f"altrole_{name}")
+        fit2, detail2 = analysis.role_fit(p, alt, table)
+        st.markdown(f"**Come {alt.lower()}** — idoneità {'n/d' if pd.isna(fit2) else f'{fit2:.0f}/100'}")
+        st.pyplot(viz.plot_role_percentiles(detail2, title=alt), use_container_width=True)
+    pool = analysis.role_pool(p["role"], table)
+    st.caption(f"Confronto con {len(pool)} giocatori del campionato nello stesso ruolo, con almeno "
+               f"{config.PLAYER_MIN_MINUTES} minuti · {int(p['minutes'])} minuti giocati da {name}.")
+
+
+with tab_giocatore:
+    _render_giocatore()
 
 # ── Tab Confronti ─────────────────────────────────────────────────────────────
 

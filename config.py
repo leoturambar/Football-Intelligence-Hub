@@ -59,60 +59,64 @@ UNDERSTAT_TEAM_NAMES = {
 }
 
 # ── Role profiles ─────────────────────────────────────────────────────────────
-# Metric weights for player-role fit scoring (higher weight = more important for role)
-# All metrics are per-90 from FBref
+# Player-role fit (analysis.py, Level 3). Keys are metric ids defined in
+# analysis.PLAYER_METRICS (built from FotMob per-match player stats, per 90
+# or %). Weight = how diagnostic the metric is for the role. Lower-is-better
+# metrics (dribbled_past, dispossessed, fouls) are inverted before weighting.
+# Roles are derived from FotMob lineup positions + formation (analysis.assign_roles);
+# FotMob cannot separate e.g. regista from mediano, so roles are slightly coarser
+# than the list in CLAUDE.md.
 
 ROLE_PROFILES = {
-    "Terzino offensivo": {
-        "progressive_carries_per90":  1.2,
-        "crosses_per90":              1.5,
-        "progressive_passes_per90":   1.0,
-        "tackles_per90":              0.8,
-        "interceptions_per90":        0.6,
+    "Portiere": {
+        "goals_prevented": 1.5, "save_pct": 1.0, "saves": 0.4,
+        "long_ball_pct": 0.5, "pass_pct": 0.5,
     },
-    "Terzino difensivo": {
-        "tackles_per90":              1.5,
-        "interceptions_per90":        1.5,
-        "clearances_per90":           1.2,
-        "progressive_carries_per90":  0.5,
-        "crosses_per90":              0.4,
+    "Difensore centrale": {
+        "aerial_pct": 1.0, "aerials": 0.8, "clearances": 0.8, "interceptions": 0.8,
+        "tackles": 0.6, "ground_pct": 0.7, "pass_pct": 0.6, "long_balls": 0.5,
+        "dribbled_past": 0.6,
+    },
+    "Terzino": {
+        "tackles": 0.8, "interceptions": 0.6, "recoveries": 0.6, "final_third": 0.8,
+        "crosses": 0.7, "chances": 0.6, "ground_pct": 0.5, "dribbled_past": 0.6,
+    },
+    "Esterno a tutta fascia": {
+        "crosses": 0.9, "chances": 0.8, "final_third": 0.8, "xa": 0.7,
+        "box_touches": 0.6, "dribbles": 0.6, "tackles": 0.6, "recoveries": 0.5,
     },
     "Mediano": {
-        "progressive_passes_per90":   1.5,
-        "tackles_per90":              1.2,
-        "interceptions_per90":        1.0,
-        "progressive_carries_per90":  0.8,
-        "key_passes_per90":           0.8,
+        "recoveries": 1.0, "tackles": 0.9, "interceptions": 0.9, "pass_pct": 0.8,
+        "ground_pct": 0.7, "final_third": 0.5, "dispossessed": 0.6, "fouls": 0.3,
     },
-    "Mezzala": {
-        "progressive_carries_per90":  1.4,
-        "key_passes_per90":           1.3,
-        "progressive_passes_per90":   1.2,
-        "tackles_per90":              0.8,
-        "shots_per90":                0.9,
+    "Centrocampista centrale": {
+        "final_third": 1.0, "pass_pct": 0.8, "chances": 0.8, "xa": 0.7,
+        "recoveries": 0.7, "touches": 0.6, "tackles": 0.5, "dribbles": 0.4,
+    },
+    "Esterno di centrocampo": {
+        "crosses": 0.8, "chances": 0.8, "dribbles": 0.8, "xa": 0.8,
+        "recoveries": 0.5, "tackles": 0.5, "box_touches": 0.5,
     },
     "Trequartista": {
-        "key_passes_per90":           2.0,
-        "shot_creating_actions_per90":1.8,
-        "progressive_carries_per90":  1.3,
-        "xA_per90":                   1.5,
-        "tackles_per90":              0.3,
+        "chances": 1.0, "xa": 1.0, "xg": 0.8, "box_touches": 0.8,
+        "dribbles": 0.7, "final_third": 0.6, "dispossessed": 0.4,
     },
     "Ala": {
-        "progressive_carries_per90":  1.6,
-        "key_passes_per90":           1.2,
-        "xA_per90":                   1.3,
-        "shots_per90":                1.0,
-        "dribbles_completed_per90":   1.4,
+        "dribbles": 1.0, "xa": 0.9, "box_touches": 0.9, "xg": 0.8,
+        "chances": 0.8, "crosses": 0.5, "dispossessed": 0.4,
+    },
+    "Punta": {
+        "xg": 1.0, "box_touches": 0.9, "shots": 0.7, "xa": 0.6,
+        "chances": 0.5, "dribbles": 0.5, "aerials": 0.4,
     },
     "Centravanti": {
-        "goals_per90":                2.0,
-        "xG_per90":                   1.8,
-        "shots_on_target_per90":      1.5,
-        "aerial_duels_won_pct":       1.2,
-        "progressive_carries_per90":  0.6,
+        "xg": 1.0, "box_touches": 0.9, "shots": 0.8, "goals": 0.6,
+        "aerials": 0.6, "aerial_pct": 0.4, "xa": 0.3,
     },
 }
+
+PLAYER_MIN_MINUTES = 300   # minimum league minutes to be scored / benchmarked
+ROLE_MIN_POOL      = 8     # minimum players in a role to compute percentiles
 
 # ── Visualization ─────────────────────────────────────────────────────────────
 

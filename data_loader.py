@@ -447,6 +447,7 @@ def load_sb_lineups(match_id: int) -> pd.DataFrame:
 
 _FM_BASE = "https://www.fotmob.com/api/data"
 _FM_DIR = os.path.join(DATA_DIR, "fotmob")
+_FM_MATCH_VERSION = 2  # bump when the slimmed match schema changes
 os.makedirs(_FM_DIR, exist_ok=True)
 _FM_SESSION = requests.Session()
 _FM_SESSION.headers["User-Agent"] = (
@@ -587,7 +588,9 @@ def load_fotmob_match(match_id: int) -> dict:
     """Slimmed match details (general, header, stats, shots, lineup)."""
     path = os.path.join(_FM_DIR, f"match_{match_id}.json")
     if os.path.exists(path):
-        return _fm_read(path)
+        cached = _fm_read(path)
+        if cached.get("version") == _FM_MATCH_VERSION:
+            return cached
     raw = _fm_get(f"{_FM_BASE}/matchDetails", {"matchId": match_id})
     content = raw.get("content", {}) or {}
     lineup = content.get("lineup") or {}
@@ -596,16 +599,42 @@ def load_fotmob_match(match_id: int) -> dict:
         t = t or {}
         return {
             "name": t.get("name"),
+            "id": t.get("id"),
             "formation": t.get("formation"),
             "coach": (t.get("coach") or {}).get("name"),
+            # positionId encodes line (id // 10) and lateral slot (id % 10)
+            "starters": [
+                {"id": p.get("id"), "positionId": p.get("positionId")}
+                for p in t.get("starters", []) or []
+            ],
         }
 
+    players = []
+    for p in (content.get("playerStats") or {}).values():
+        flat = {}
+        for grp in p.get("stats") or []:
+            for s in (grp.get("stats") or {}).values():
+                key, stat = s.get("key"), s.get("stat") or {}
+                if not key or key in flat or stat.get("value") is None:
+                    continue
+                flat[key] = stat.get("value")
+                if stat.get("total") is not None:
+                    flat[f"{key}_att"] = stat.get("total")
+        if flat:
+            players.append({
+                "id": p.get("id"), "name": p.get("name"), "teamId": p.get("teamId"),
+                "teamName": p.get("teamName"), "isGoalkeeper": p.get("isGoalkeeper"),
+                "usualPosition": p.get("usualPosition"), "stats": flat,
+            })
+
     slim = {
+        "version": _FM_MATCH_VERSION,
         "general": raw.get("general"),
         "header": {"teams": (raw.get("header") or {}).get("teams")},
         "stats": content.get("stats"),
         "shots": (content.get("shotmap") or {}).get("shots", []),
         "lineup": {"home": _side(lineup.get("homeTeam")), "away": _side(lineup.get("awayTeam"))},
+        "players": players,
     }
     if (raw.get("general") or {}).get("finished"):
         _fm_write(path, slim)
@@ -725,3 +754,71 @@ def load_league_team_stats(league_id: int, season: str | None) -> pd.DataFrame:
     df = df.reset_index()
     df.to_csv(path, index=False)
     return df
+
+
+def fotmob_finished_match_ids(league_id: int, season: str | None) -> list[int]:
+    fx = fotmob_fixtures(league_id, season)
+    return fx.loc[fx["finished"], "match_id"].tolist()
+
+
+def fotmob_missing_match_ids(league_id: int, season: str | None) -> list[int]:
+    """Finished league matches not yet cached with the current schema."""
+    missing = []
+    for mid in fotmob_finished_match_ids(league_id, season):
+        path = os.path.join(_FM_DIR, f"match_{mid}.json")
+        if not os.path.exists(path) or _fm_read(path).get("version") != _FM_MATCH_VERSION:
+            missing.append(mid)
+    return missing
+
+
+def load_league_player_appearances(
+    league_id: int, season: str | None, progress=None,
+) -> pd.DataFrame:
+    """
+    One row per player per finished league match, for every team.
+
+    Downloads any match not cached yet (throttled); ``progress(i, n)`` is
+    called after each download so the UI can show a progress bar.
+    Columns: match_id, date, team, team_id, player_id, player, is_gk,
+    usual_position (0 GK, 1 DEF, 2 MID, 3 FWD), started, position_id,
+    formation, minutes_played, then one column per FotMob player stat key
+    (plus '<key>_att' for fractions).
+    """
+    fx = fotmob_fixtures(league_id, season)
+    fx = fx[fx["finished"]]
+    missing = set(fotmob_missing_match_ids(league_id, season))
+    done = 0
+    rows = []
+    for _, m in fx.iterrows():
+        mid = m["match_id"]
+        match = load_fotmob_match(mid)
+        if mid in missing:
+            done += 1
+            if progress:
+                progress(done, len(missing))
+        starters = {}
+        formations = {}
+        # fixture-style names (e.g. "Inter", not playerStats' "Internazionale")
+        names = {t.get("id"): t.get("name") for t in (match.get("header") or {}).get("teams") or []}
+        for side in ("home", "away"):
+            lu = match["lineup"][side]
+            formations[lu.get("id")] = lu.get("formation")
+            for s in lu.get("starters", []):
+                starters[s["id"]] = s.get("positionId")
+        for p in match.get("players", []):
+            row = {
+                "match_id": mid,
+                "date": m["date"],
+                "team": names.get(p.get("teamId"), p.get("teamName")),
+                "team_id": p.get("teamId"),
+                "player_id": p.get("id"),
+                "player": p.get("name"),
+                "is_gk": bool(p.get("isGoalkeeper")),
+                "usual_position": p.get("usualPosition"),
+                "started": p.get("id") in starters,
+                "position_id": starters.get(p.get("id")),
+                "formation": formations.get(p.get("teamId")),
+            }
+            row.update(p.get("stats", {}))
+            rows.append(row)
+    return pd.DataFrame(rows)

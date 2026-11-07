@@ -143,8 +143,9 @@ a filtered DataFrame and returns metrics.
 ---
 
 ## Role profiles (player analysis)
-Define role profiles AFTER first FBref scraping session, once real column
-names are known. Do not invent metric names — use exact FBref column headers.
+Role profiles live in config.ROLE_PROFILES and use metric ids from
+analysis.PLAYER_METRICS, built from real FotMob player stat keys (verified
+2026-11-07). Do not invent metric names.
 
 Roles to cover (minimum set):
 Portiere, Difensore centrale, Terzino difensivo, Terzino offensivo,
@@ -223,6 +224,11 @@ third of Serie A — opponents move through midfield with minimal resistance."
   league ranks, opponent-type splits in analysis.py, sample-size warnings).
 - Tab Avversario (added): next-opponent report — profile tiers, shot zones,
   league S&W, record vs teams with our profile, LLM pre-match brief.
+- Tab Giocatore: Level 3 done — roles from FotMob formation + positionId
+  (analysis.assign_roles), role fit = weighted league percentile vs same-role
+  players (config.ROLE_PROFILES, PLAYER_MIN_MINUTES), alternative-role
+  similarity (different role family only), weak links (< 30), on/off impact.
+  Needs every finished league match cached (download button, ~1–4 min once).
 - Local LLM (qwen2.5:14b) misreads payload numbers (e.g. wrong formation);
   treat its narrative as a draft. Claude backend untested (no API credit).
 

@@ -385,3 +385,35 @@ def plot_shot_map(
     _set_title(ax, title or "Mappa dei tiri")
     plt.tight_layout()
     return fig
+
+
+
+def plot_role_percentiles(detail: pd.DataFrame, title: str = "") -> plt.Figure:
+    """
+    Horizontal percentile bars for a player's role metrics (from
+    analysis.role_fit). 50 = league median for the role. Bars are coloured
+    by band: <30 weak, 30-70 average, >70 strong.
+    """
+    d = detail.sort_values("Percentile") if detail is not None and not detail.empty else pd.DataFrame()
+    fig, ax = plt.subplots(figsize=(7, 0.45 * max(len(d), 3) + 1))
+    _style_fig(fig)
+    ax.set_facecolor(config.PITCH_COLOR)
+    if d.empty:
+        ax.text(0.5, 0.5, "Dati insufficienti per questo ruolo", ha="center", va="center",
+                color=config.NEUTRAL_COLOR, transform=ax.transAxes, style="italic")
+        ax.axis("off")
+        return fig
+    colors = ["#F55B5B" if p < 30 else (config.NEUTRAL_COLOR if p <= 70 else "#5BD08A")
+              for p in d["Percentile"]]
+    ax.barh(d["Metrica"], d["Percentile"], color=colors, alpha=0.9)
+    ax.axvline(50, color="white", lw=0.8, ls="--", alpha=0.6)
+    ax.set_xlim(0, 100)
+    for y, (p, v) in enumerate(zip(d["Percentile"], d["Valore"])):
+        ax.text(min(p + 1.5, 88), y, f"{p:.0f}° · {v:.2f}", va="center", color="white", fontsize=8)
+    ax.tick_params(colors="white", labelsize=9)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    ax.set_xlabel("Percentile nel ruolo (50 = mediana del campionato)", color="white", fontsize=9)
+    _set_title(ax, title)
+    plt.tight_layout()
+    return fig
