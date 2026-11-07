@@ -69,7 +69,9 @@ def build_squad_narrative(
         "2. Two key strengths — each with a specific metric from the data.\n"
         "3. Two main weaknesses — each with a specific metric from the data.\n"
         "4. One concrete tactical recommendation for the coaching staff.\n\n"
-        "No filler. No observations that could apply to any team."
+        "No filler. No observations that could apply to any team.\n"
+        "Only compare to the league where the DATA gives a league rank or average.\n"
+        "Write the whole briefing in Italian."
     )
     return PROMPTS["system_analyst"], user
 

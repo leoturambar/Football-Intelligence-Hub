@@ -15,11 +15,15 @@ with an LLM coach that turns numbers into concrete decisions.
 
 ## Data sources
 
-| Source | Coverage | Used for |
-|--------|----------|----------|
-| FBref | All major leagues, current seasons | Primary aggregate stats |
-| Understat | Top 5 leagues, current seasons | xG and shot maps |
-| StatsBomb Open Data | Historical competitions (Euro 2020, etc.) | Event-level viz |
+| Source | Coverage | Used for | Status (Nov 2026) |
+|--------|----------|----------|-------------------|
+| FotMob | Top 5 leagues, 2018/19 → current season | Match stats, xG, shot maps, formations, league rankings | Primary |
+| FBref | All major leagues | Aggregate stats | Blocked by Cloudflare — cached CSVs only |
+| Understat | Top 5 leagues | xG | Site offline |
+| StatsBomb Open Data | Historical competitions (Euro 2020, etc.) | Event-level viz | Working |
+
+FotMob data comes from the unofficial JSON endpoints its website uses; requests are
+throttled and cached in `data/fotmob/`. Personal / educational use only.
 
 ## Stack
 
@@ -62,7 +66,7 @@ football-intelligence-hub/
 ├── data_loader.py
 ├── metrics.py
 ├── viz.py
-├── analysis.py
+├── analysis.py        # planned
 ├── llm.py
 ├── data/
 ├── CLAUDE.md

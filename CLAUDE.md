@@ -29,17 +29,19 @@ Every opponent "type" is defined by a numeric metric, divided into tertiles
 (low / medium / high) across the competition. Tertile thresholds are computed
 on the fly from the full league distribution — not hardcoded.
 
-| Opponent type        | Metric proxy              | Direction |
-|----------------------|---------------------------|-----------|
-| High/low press       | PPDA                      | low = high press |
-| Defensive block      | Shots conceded per match  | low = defensive/closed |
-| Counter-attack speed | Progressive carries (def) | high = fast transitions |
-| Possession-based     | Possession % avg          | high = possession team |
+| Opponent type        | Metric proxy (FotMob)                         | Direction |
+|----------------------|-----------------------------------------------|-----------|
+| High/low press       | PPDA stimato (see metrics.summarize)          | low = high press |
+| Defensive block      | xG conceded per match                         | low = defensive/closed |
+| Counter-attack speed | not available — no carries/transition data    | — |
+| Possession-based     | Possession % avg                              | high = possession team |
 
-**Implementation note:** exact metric availability depends on what FBref
-exposes at match level. Finalize metric choices in Claude Code after first
-`read_schedule()` + `read_team_match_stats()` call. The tertile pattern
-stays constant regardless.
+**Implementation note (verified 2026-11-07):** FotMob gives per-match
+possession, xG (open/set play), shots, big chances, passes split by own/opp
+half, tackles, interceptions, fouls, duels, shot coordinates and formations —
+but no event locations for defensive actions and no progressive carries.
+PPDA is therefore an estimate: opponent passes in their own half ÷
+(tackles + interceptions + fouls). The tertile pattern stays constant.
 
 ### Level 3 — Who matters and how much (player contribution)
 - Key player identification (remove-one impact on team metrics)
@@ -51,7 +53,22 @@ stays constant regardless.
 
 ## Data sources
 
-### FBref via soccerdata (primary)
+### Source status (checked 2026-11-07)
+- FotMob: working → **primary source** for current seasons (2018/19 onward).
+- FBref: behind a Cloudflare challenge; soccerdata + Opera hangs. Do not try
+  to bypass it. Old cached CSVs in data/ (Serie A 24/25) still load.
+- Understat: site offline ("We will come back soon"); its loaders fail.
+- StatsBomb Open Data: working (historical competitions only).
+
+### FotMob (primary)
+Unofficial JSON endpoints used by fotmob.com itself; throttled
+(`FOTMOB_REQUEST_DELAY`) and cached in data/fotmob/ (finished matches cached
+forever). League ids in `config.FOTMOB_LEAGUES` (verified at runtime against
+`details.name`). Loaders: `load_team_match_table`, `load_team_shots`,
+`load_league_team_stats` in data_loader.py. Stat key → column mapping in
+`FM_STAT_KEYS`; opponent values use the `opp_` prefix.
+
+### FBref via soccerdata (currently blocked)
 Aggregate and match-level stats for current seasons, all major leagues.
 
 **Native leagues (verified from soccerdata docs):**
@@ -153,8 +170,8 @@ Flat repo — all .py modules in root. Subfolders only for data (cache).
 |------|------|
 | app.py | Streamlit UI, tab routing |
 | config.py | Constants: league slugs, viz palette, LLM settings, tertile logic |
-| data_loader.py | FBref + Understat + StatsBomb, with local CSV/JSON caching |
-| metrics.py | Derived metrics: PPDA proxy, progressivity index, set piece rate, etc. |
+| data_loader.py | FotMob + FBref + Understat + StatsBomb, with local CSV/JSON caching |
+| metrics.py | Subset-agnostic team metrics, league context, S&W, LLM payload |
 | viz.py | Pitch visualizations via mplsoccer: heatmaps, passing networks, Voronoi |
 | analysis.py | S&W scoring, opponent categorization, player-role fit, benchmarking |
 | llm.py | Dual backend: Anthropic API + Ollama local |
@@ -162,7 +179,7 @@ Flat repo — all .py modules in root. Subfolders only for data (cache).
 ---
 
 ## LLM backend
-Dual: Claude API (claude-sonnet) and Ollama local (qwen2.5:14b).
+Dual: Claude API (claude-sonnet-5-5) and Ollama local (qwen2.5:14b).
 Toggle in UI sidebar. Default: Ollama.
 All calls route through `llm.call_llm(prompt, backend, system)`.
 LLM role: turn numeric outputs into narrative coaching language.

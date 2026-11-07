@@ -7,7 +7,7 @@ matplotlib Figure.  Callers (app.py) control rendering via st.pyplot(fig).
 
 import numpy as np
 import matplotlib.pyplot as plt
-from mplsoccer import Pitch, Radar
+from mplsoccer import Pitch, Radar, VerticalPitch
 import pandas as pd
 
 import config
@@ -343,5 +343,45 @@ def plot_player_radar(
         pad=20,
     )
 
+    plt.tight_layout()
+    return fig
+
+
+def plot_shot_map(
+    shots: pd.DataFrame,
+    title: str = "",
+    color: str | None = None,
+) -> plt.Figure:
+    """
+    Half-pitch shot map from FotMob shot coordinates (105x68 frame, attacking
+    towards x=105). Marker size = xG; filled = goal, hollow = no goal.
+    Never draws placeholder data: an empty frame shows an explicit note.
+    """
+    color = color or config.HOME_COLOR
+    pitch = VerticalPitch(
+        pitch_type="uefa", half=True,
+        pitch_color=config.PITCH_COLOR, line_color=config.LINE_COLOR, line_zorder=2,
+    )
+    fig, ax = pitch.draw(figsize=(7, 6))
+    _style_fig(fig)
+
+    if shots is None or shots.empty or not _has_xy(shots):
+        ax.text(34, 75, "Nessun tiro nei dati selezionati", ha="center",
+                color=config.NEUTRAL_COLOR, fontsize=11, style="italic")
+    else:
+        sizes = 60 + 900 * shots["xg"].fillna(0.02).clip(0, 1)
+        miss = shots[~shots["is_goal"].astype(bool)]
+        goal = shots[shots["is_goal"].astype(bool)]
+        pitch.scatter(miss["x"], miss["y"], s=sizes[miss.index], ax=ax,
+                      facecolors="none", edgecolors=color, linewidths=1.2, alpha=0.75, zorder=3)
+        pitch.scatter(goal["x"], goal["y"], s=sizes[goal.index], ax=ax,
+                      color=color, edgecolors="white", linewidths=1, alpha=0.95, zorder=4)
+        ax.text(
+            34, 53.5,
+            f"{len(shots)} tiri · {int(goal.shape[0])} gol · xG {shots['xg'].sum():.1f}",
+            ha="center", color="white", fontsize=10,
+        )
+
+    _set_title(ax, title or "Mappa dei tiri")
     plt.tight_layout()
     return fig

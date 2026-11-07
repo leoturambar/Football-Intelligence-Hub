@@ -26,8 +26,10 @@ Note: sb.events() coordinate columns are stored as strings in CSV; the
 st.cache_data layer retains the original list types within a session.
 """
 
+import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 
 import requests
@@ -40,6 +42,8 @@ from config import (
     BROWSER_PATH,
     CACHE_DAYS,
     DATA_DIR,
+    FOTMOB_LEAGUE_CACHE_HOURS,
+    FOTMOB_REQUEST_DELAY,
     UNDERSTAT_LEAGUES,
     UNDERSTAT_TEAM_NAMES,
 )
@@ -429,4 +433,295 @@ def load_sb_lineups(match_id: int) -> pd.DataFrame:
     df = pd.concat(dfs, ignore_index=True)
     df.to_csv(path, index=False)
     _print_cols(df, f"sb_lineups | match={match_id}")
+    return df
+
+
+# ── FotMob (primary source for current seasons) ───────────────────────────────
+#
+# Unofficial JSON endpoints used by fotmob.com itself — personal/educational use,
+# requests are throttled (FOTMOB_REQUEST_DELAY) and cached on disk:
+#   GET /api/data/leagues?id={league_id}&season={YYYY/YYYY}  fixtures, table, stat links
+#   GET /api/data/matchDetails?matchId={id}                  per-match stats, shots, lineups
+#   GET data.fotmob.com/stats/{…}.json                       season team rankings
+# Finished matches never change, so their (slimmed) JSON is cached forever.
+
+_FM_BASE = "https://www.fotmob.com/api/data"
+_FM_DIR = os.path.join(DATA_DIR, "fotmob")
+os.makedirs(_FM_DIR, exist_ok=True)
+_FM_SESSION = requests.Session()
+_FM_SESSION.headers["User-Agent"] = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+)
+
+# FotMob stat keys → stable column names used by metrics.py
+FM_STAT_KEYS = {
+    "BallPossesion":              "possession",
+    "expected_goals":             "xg",
+    "expected_goals_open_play":   "xg_open_play",
+    "expected_goals_set_play":    "xg_set_play",
+    "expected_goals_non_penalty": "npxg",
+    "expected_goals_on_target":   "xgot",
+    "total_shots":                "shots",
+    "ShotsOnTarget":              "shots_on_target",
+    "shots_inside_box":           "shots_inside_box",
+    "big_chance":                 "big_chances",
+    "big_chance_missed_title":    "big_chances_missed",
+    "touches_opp_box":            "touches_opp_box",
+    "passes":                     "passes",
+    "accurate_passes":            "passes_accurate",
+    "own_half_passes":            "passes_own_half",
+    "opposition_half_passes":     "passes_opp_half",
+    "long_balls_accurate":        "long_balls_accurate",
+    "accurate_crosses":           "crosses_accurate",
+    "corners":                    "corners",
+    "matchstats.headers.tackles": "tackles",
+    "interceptions":              "interceptions",
+    "shot_blocks":                "blocks",
+    "clearances":                 "clearances",
+    "keeper_saves":               "saves",
+    "duel_won":                   "duels_won",
+    "aerials_won":                "aerials_won",
+    "dribbles_succeeded":         "dribbles_succeeded",
+    "fouls":                      "fouls",
+    "yellow_cards":               "yellow_cards",
+    "red_cards":                  "red_cards",
+}
+
+# Season team rankings fetched for league context (FotMob stat list names)
+FM_LEAGUE_STATS = {
+    "possession_percentage_team":   "possession",
+    "expected_goals_team":          "xg_total",
+    "expected_goals_conceded_team": "xga_total",
+    "goals_team_match":             "goals_pm",
+    "goals_conceded_team_match":    "goals_conceded_pm",
+    "ontarget_scoring_att_team":    "shots_on_target_pm",
+    "big_chance_team":              "big_chances_total",
+    "accurate_pass_team":           "passes_accurate_pm",
+    "touches_in_opp_box_team":      "touches_opp_box_total",
+    "interception_team":            "interceptions_pm",
+    "total_tackle_team":            "tackles_pm",
+    "poss_won_att_3rd_team":        "poss_won_att_3rd_pm",
+    "clean_sheet_team":             "clean_sheets",
+}
+
+
+def _fm_get(url: str, params: dict | None = None):
+    time.sleep(FOTMOB_REQUEST_DELAY)
+    resp = _FM_SESSION.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fm_read(path: str):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _fm_write(path: str, data) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _season_slug(season: str | None) -> str:
+    return (season or "current").replace("/", "-")
+
+
+@st.cache_data(ttl=FOTMOB_LEAGUE_CACHE_HOURS * 3600, show_spinner="Caricamento campionato (FotMob)…")
+def load_fotmob_league(league_id: int, season: str | None = None) -> dict:
+    """
+    Raw league payload: fixtures, table, season stat links.
+
+    Args:
+        league_id: FotMob league id (see config.FOTMOB_LEAGUES)
+        season:    "2026/2027" style, or None for the current season
+    """
+    path = os.path.join(_FM_DIR, f"league_{league_id}_{_season_slug(season)}.json")
+    if not _is_stale(path, days=FOTMOB_LEAGUE_CACHE_HOURS / 24):
+        return _fm_read(path)
+    params = {"id": league_id}
+    if season:
+        params["season"] = season
+    data = _fm_get(f"{_FM_BASE}/leagues", params)
+    slim = {k: data.get(k) for k in ("details", "allAvailableSeasons", "table", "fixtures", "stats")}
+    _fm_write(path, slim)
+    return slim
+
+
+def fotmob_seasons(league_id: int) -> list[str]:
+    return load_fotmob_league(league_id, None).get("allAvailableSeasons", [])
+
+
+def fotmob_fixtures(league_id: int, season: str | None) -> pd.DataFrame:
+    """One row per league match (played or not)."""
+    league = load_fotmob_league(league_id, season)
+    rows = []
+    for m in league["fixtures"]["allMatches"]:
+        stt = m.get("status", {})
+        hg = ag = None
+        score = stt.get("scoreStr")
+        finished = bool(stt.get("finished")) and not stt.get("cancelled")
+        if finished and score and "-" in score:
+            hg, ag = (int(x) for x in score.split("-"))
+        rows.append({
+            "match_id":   int(m["id"]),
+            "round":      int(m["round"]) if str(m.get("round", "")).isdigit() else m.get("round"),
+            "utc_time":   stt.get("utcTime"),
+            "home":       m["home"]["name"],
+            "away":       m["away"]["name"],
+            "finished":   finished and hg is not None,
+            "home_goals": hg,
+            "away_goals": ag,
+        })
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["utc_time"], utc=True, format="ISO8601").dt.tz_convert("Europe/Rome").dt.date
+    return df
+
+
+def fotmob_teams(league_id: int, season: str | None) -> list[str]:
+    fx = fotmob_fixtures(league_id, season)
+    return sorted(set(fx["home"]) | set(fx["away"]))
+
+
+def load_fotmob_match(match_id: int) -> dict:
+    """Slimmed match details (general, header, stats, shots, lineup)."""
+    path = os.path.join(_FM_DIR, f"match_{match_id}.json")
+    if os.path.exists(path):
+        return _fm_read(path)
+    raw = _fm_get(f"{_FM_BASE}/matchDetails", {"matchId": match_id})
+    content = raw.get("content", {}) or {}
+    lineup = content.get("lineup") or {}
+
+    def _side(t):
+        t = t or {}
+        return {
+            "name": t.get("name"),
+            "formation": t.get("formation"),
+            "coach": (t.get("coach") or {}).get("name"),
+        }
+
+    slim = {
+        "general": raw.get("general"),
+        "header": {"teams": (raw.get("header") or {}).get("teams")},
+        "stats": content.get("stats"),
+        "shots": (content.get("shotmap") or {}).get("shots", []),
+        "lineup": {"home": _side(lineup.get("homeTeam")), "away": _side(lineup.get("awayTeam"))},
+    }
+    if (raw.get("general") or {}).get("finished"):
+        _fm_write(path, slim)
+    return slim
+
+
+def _fm_flat_stats(match: dict) -> dict[str, tuple]:
+    """{column_name: (home_value, away_value)} from the 'All' period."""
+    out: dict[str, tuple] = {}
+    periods = ((match.get("stats") or {}).get("Periods") or {}).get("All") or {}
+    for grp in periods.get("stats", []):
+        for s in grp.get("stats", []):
+            col = FM_STAT_KEYS.get(s.get("key"))
+            raw = s.get("rawStats") or []
+            if not col or col in out or len(raw) != 2 or None in raw:
+                continue
+            out[col] = (raw[0].get("value"), raw[1].get("value"))
+            if "total" in raw[0]:
+                out[f"{col}_att"] = (raw[0].get("total"), raw[1].get("total"))
+    return out
+
+
+@st.cache_data(ttl=FOTMOB_LEAGUE_CACHE_HOURS * 3600, show_spinner="Caricamento partite della squadra (FotMob)…")
+def load_team_match_table(league_id: int, season: str | None, team: str) -> pd.DataFrame:
+    """
+    One row per finished league match of *team*: metadata + team stats
+    (plain column names) + opponent stats (``opp_`` prefix).
+    """
+    fx = fotmob_fixtures(league_id, season)
+    fx = fx[fx["finished"] & ((fx["home"] == team) | (fx["away"] == team))]
+    rows = []
+    for _, m in fx.sort_values("utc_time").iterrows():
+        match = load_fotmob_match(m["match_id"])
+        is_home = m["home"] == team
+        me, opp = (0, 1) if is_home else (1, 0)
+        side, opp_side = ("home", "away") if is_home else ("away", "home")
+        gf = int(m["home_goals"] if is_home else m["away_goals"])
+        ga = int(m["away_goals"] if is_home else m["home_goals"])
+        row = {
+            "match_id":      m["match_id"],
+            "date":          m["date"],
+            "round":         m["round"],
+            "venue":         "Casa" if is_home else "Trasferta",
+            "opponent":      m["away"] if is_home else m["home"],
+            "goals_for":     gf,
+            "goals_against": ga,
+            "result":        "V" if gf > ga else ("N" if gf == ga else "P"),
+            "points":        3 if gf > ga else (1 if gf == ga else 0),
+            "formation":     match["lineup"][side].get("formation"),
+            "opp_formation": match["lineup"][opp_side].get("formation"),
+            "coach":         match["lineup"][side].get("coach"),
+        }
+        for col, vals in _fm_flat_stats(match).items():
+            row[col] = vals[me]
+            row[f"opp_{col}"] = vals[opp]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=FOTMOB_LEAGUE_CACHE_HOURS * 3600, show_spinner=False)
+def load_team_shots(league_id: int, season: str | None, team: str) -> pd.DataFrame:
+    """
+    All shots for and against *team* in finished league matches.
+    Coordinates are FotMob's 105x68 frame, shooting team attacking towards x=105.
+    """
+    fx = fotmob_fixtures(league_id, season)
+    fx = fx[fx["finished"] & ((fx["home"] == team) | (fx["away"] == team))]
+    rows = []
+    for mid in fx["match_id"]:
+        match = load_fotmob_match(mid)
+        teams = (match.get("header") or {}).get("teams") or []
+        team_id = next((t["id"] for t in teams if t.get("name") == team), None)
+        for sh in match.get("shots", []):
+            rows.append({
+                "match_id":  mid,
+                "side":      "for" if sh.get("teamId") == team_id else "against",
+                "x":         sh.get("x"),
+                "y":         sh.get("y"),
+                "xg":        sh.get("expectedGoals"),
+                "is_goal":   sh.get("eventType") == "Goal" and not sh.get("isOwnGoal"),
+                "on_target": sh.get("isOnTarget"),
+                "situation": sh.get("situation"),
+                "shot_type": sh.get("shotType"),
+                "player":    sh.get("playerName"),
+                "minute":    sh.get("min"),
+            })
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=FOTMOB_LEAGUE_CACHE_HOURS * 3600, show_spinner="Caricamento statistiche di lega (FotMob)…")
+def load_league_team_stats(league_id: int, season: str | None) -> pd.DataFrame:
+    """
+    Season rankings for every team in the league, one column per stat in
+    FM_LEAGUE_STATS (FotMob's own per-match or total values) plus 'matches'.
+    """
+    path = os.path.join(_FM_DIR, f"league_stats_{league_id}_{_season_slug(season)}.csv")
+    if not _is_stale(path, days=FOTMOB_LEAGUE_CACHE_HOURS / 24):
+        return pd.read_csv(path)
+
+    league = load_fotmob_league(league_id, season)
+    links = {t.get("name"): t.get("fetchAllUrl") for t in (league.get("stats") or {}).get("teams", [])}
+    frames = []
+    for stat, col in FM_LEAGUE_STATS.items():
+        url = links.get(stat)
+        if not url:
+            continue
+        data = _fm_get(url)
+        lst = (data.get("TopLists") or [{}])[0].get("StatList", [])
+        frames.append(pd.DataFrame(
+            [{"team": r["ParticipantName"], col: r["StatValue"], "matches": r.get("MatchesPlayed")} for r in lst]
+        ).set_index("team"))
+    if not frames:
+        return pd.DataFrame()
+    df = frames[0]
+    for f in frames[1:]:
+        df = df.join(f.drop(columns="matches"), how="outer")
+    df = df.reset_index()
+    df.to_csv(path, index=False)
     return df

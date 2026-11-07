@@ -11,6 +11,19 @@ FBREF_LEAGUES = {
     # Champions League: richiede config custom, si aggiunge dopo
 }
 
+# FotMob league IDs (primary source for current seasons since Nov 2026:
+# FBref is behind a Cloudflare challenge, Understat is offline).
+# Verified 2026-11-07 via /api/data/leagues?id=… → details.name.
+FOTMOB_LEAGUES = {
+    "Serie A":        55,
+    "Premier League": 47,
+    "La Liga":        87,
+    "Bundesliga":     54,
+    "Ligue 1":        53,
+}
+FOTMOB_REQUEST_DELAY = 0.6   # seconds between live FotMob requests
+FOTMOB_LEAGUE_CACHE_HOURS = 12
+
 # StatsBomb — NON hardcodare gli ID, si caricano a runtime
 # In data_loader.py useremo: sb.competitions() per ottenere la lista aggiornata
 # Qui teniamo solo label human-readable come riferimento
