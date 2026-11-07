@@ -137,9 +137,10 @@ DEFAULT_BACKEND  = "Ollama (locale)"
 CLAUDE_MODEL     = "claude-sonnet-5-5"
 CLAUDE_MAX_TOKENS = 16000  # room for adaptive thinking + narrative
 CLAUDE_EFFORT    = "medium"
-OLLAMA_MODEL     = "qwen2.5:14b"
-OLLAMA_URL       = "http://localhost:11434/api/generate"
-LLM_MAX_TOKENS   = 900
+OLLAMA_MODEL     = "qwen3.5:9b"   # default (best grounded narratives in local tests); UI lists all installed
+OLLAMA_BASE_URL  = "http://localhost:11434"
+OLLAMA_URL       = OLLAMA_BASE_URL + "/api/generate"
+LLM_MAX_TOKENS   = 1200
 LLM_TEMPERATURE  = 0.4
 
 # ── FBref scraping config ─────────────────────────────────────────────────────

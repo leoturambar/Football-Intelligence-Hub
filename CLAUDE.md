@@ -180,7 +180,8 @@ Flat repo — all .py modules in root. Subfolders only for data (cache).
 ---
 
 ## LLM backend
-Dual: Claude API (claude-sonnet-5-5) and Ollama local (qwen2.5:14b).
+Dual: Ollama local (default qwen3.5:9b, any installed model selectable) and
+Claude API (claude-sonnet-5-5) as a paid backup only.
 Toggle in UI sidebar. Default: Ollama.
 All calls route through `llm.call_llm(prompt, backend, system)`.
 LLM role: turn numeric outputs into narrative coaching language.
@@ -232,8 +233,16 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Tab Confronti: players of one role (up to 4, overlaid percentile radar,
   per-90 values, league leaderboard by role fit) and team vs team (metrics
   side by side with winner, opponent-type tiers).
-- Local LLM (qwen2.5:14b) misreads payload numbers (e.g. wrong formation);
-  treat its narrative as a draft. Claude backend untested (no API credit).
+- Tab Partita: match report from FotMob (both teams' shots on one pitch,
+  xG race, stats, top-rated players, big chances, LLM match story).
+- Narrative is fact-grounded (facts.py): code writes Italian facts with exact
+  numbers (F1, F2…), the LLM only rewrites them citing ids, and facts.validate
+  rejects any number not in the facts (one automatic fix retry, then a
+  warning in the UI). It cannot catch misinterpretations (right number,
+  wrong meaning) — the facts are always shown next to the text.
+- Local models: default qwen3.5:9b (best in local tests: 3/3 verified first
+  try, more citations, ~6–14 s), qwen2.5:14b selectable. Claude API is a
+  paid backup only — the user does not want to spend tokens for now.
 
 ---
 

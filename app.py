@@ -1,9 +1,12 @@
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
 import analysis
 import config
 import data_loader as dl
+import facts
 import llm
 import metrics
 import viz
@@ -36,6 +39,51 @@ def _show_load_error(what: str, err: Exception) -> None:
     )
 
 
+def _narrative_block(key: tuple, fact_sheet: list[dict], kind: str, title: str) -> None:
+    """
+    Fact-grounded narrative: the facts are computed by code and always shown;
+    the LLM only rewrites them, and every number it writes is checked.
+    """
+    digest = hashlib.md5(facts.as_prompt(fact_sheet).encode("utf-8")).hexdigest()[:10]
+    full_key = (*key, digest)
+    with st.expander(f"Fatti usati ({len(fact_sheet)}) — calcolati dal codice, sempre affidabili"):
+        st.markdown(facts.as_markdown(fact_sheet))
+
+    backend = st.session_state.backend
+    model = st.session_state.get("ollama_model") if backend != "Claude API" else None
+    who = "Claude API" if backend == "Claude API" else model
+    c1, c2 = st.columns([1, 1])
+    if c1.button("Genera testo", type="primary", key=f"gen_{kind}"):
+        with st.spinner(f"Generazione con {who}…"):
+            try:
+                result = llm.narrate(kind, title, fact_sheet, backend, model)
+                st.session_state[f"narr_{kind}"] = (full_key, result, who)
+            except Exception as e:
+                st.session_state[f"narr_{kind}"] = None
+                st.error(f"Il modello non ha risposto: `{type(e).__name__}: {e}`", icon="🤖")
+
+    saved = st.session_state.get(f"narr_{kind}")
+    if not saved or saved[0] != full_key:
+        st.caption("Il testo viene scritto dal modello solo a partire dai fatti qui sopra; "
+                   "ogni numero viene poi confrontato con i fatti.")
+        return
+    _, result, used = saved
+    show_refs = c2.toggle("Mostra riferimenti ai fatti", key=f"refs_{kind}")
+    st.markdown(result["text"] if show_refs else facts.strip_citations(result["text"]))
+    chk = result["check"]
+    tries = "" if result["attempts"] == 1 else f", corretto al tentativo {result['attempts']}"
+    if chk["ok"]:
+        st.success(f"Verificato: ogni numero del testo compare nei fatti ({used}{tries}).", icon="✅")
+    else:
+        bits = []
+        if chk["unknown_numbers"]:
+            bits.append("numeri non presenti nei fatti: " + ", ".join(chk["unknown_numbers"]))
+        if chk["bad_citations"]:
+            bits.append("riferimenti inesistenti: " + ", ".join(chk["bad_citations"]))
+        st.warning("Da controllare — " + "; ".join(bits) + f" ({used}). "
+                   "Fai fede ai fatti qui sopra o rigenera.", icon="⚠️")
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -62,7 +110,14 @@ with st.sidebar:
     st.selectbox("Squadra", options=teams, key="team")
 
     st.divider()
-    st.radio("Backend LLM", options=config.LLM_BACKENDS, key="backend")
+    st.radio("Backend LLM", options=config.LLM_BACKENDS, key="backend",
+             help="Claude API è a pagamento: tenuto solo come riserva.")
+    if st.session_state.backend != "Claude API":
+        local_models = llm.ollama_models()
+        if st.session_state.get("ollama_model") not in local_models:
+            st.session_state.ollama_model = (config.OLLAMA_MODEL if config.OLLAMA_MODEL in local_models
+                                             else local_models[0])
+        st.selectbox("Modello locale", local_models, key="ollama_model")
 
     st.divider()
     st.caption("Fonte dati: FotMob (stagioni in corso) · cache locale in `data/fotmob/`")
@@ -287,28 +342,13 @@ def _render_squadra() -> None:
 
     # ── LLM narrative ─────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Analisi narrativa — LLM")
-    narr_key = (league_name, season, team, tuple(sel["match_id"]))
-    if st.button("Genera analisi", type="primary"):
-        payload = metrics.llm_payload(summary, ctx, record_str)
-        if not profiles.empty:
-            payload["Differenze per tipo di avversario"] = (
-                analysis.split_findings(team, sel, profiles) or "nessuna differenza marcata"
-            )
-        system, user = llm.build_squad_narrative(
-            team, payload, league_name, season,
-            match_context=f"{subset_note}, {record_str}",
-        )
-        with st.spinner(f"Generazione con {st.session_state.backend}…"):
-            try:
-                st.session_state.narrative = (narr_key, llm.call_llm(user, st.session_state.backend, system))
-            except Exception as e:
-                st.session_state.narrative = None
-                st.error(f"Il backend LLM non ha risposto: `{type(e).__name__}: {e}`", icon="🤖")
-    saved = st.session_state.get("narrative")
-    if saved and saved[0] == narr_key:
-        st.markdown(saved[1])
-
+    st.subheader("Analisi narrativa")
+    findings_all = analysis.split_findings(team, sel, profiles) if not profiles.empty else []
+    _narrative_block(
+        key=("team", league_name, season, team, tuple(sel["match_id"])),
+        fact_sheet=facts.team_facts(team, sel, summary, ctx, findings_all),
+        kind="team", title=f"{team} — {league_name} {season} ({subset_note})",
+    )
 
 with tab_squadra:
     _render_squadra()
@@ -437,34 +477,13 @@ def _render_avversario() -> None:
 
     # LLM brief
     st.divider()
-    st.subheader("Report pre-partita — LLM")
-    brief_key = (league_name, season, team, opp, len(opp_matches))
-    if st.button("Genera report", type="primary", key="btn_opp_brief"):
-        payload = metrics.llm_payload(s, ctx, rec)
-        payload["Profilo avversario"] = {analysis.OPPONENT_DIMENSIONS[d]["label"]: t for d, t in types.items()}
-        payload["Moduli usati"] = ", ".join(f"{k} ({v})" for k, v in forms.items()) or "n/d"
-        payload["Ultime 5 (V/N/P)"] = last5
-        if zones_for:
-            payload["Da dove crea (% xG)"] = {k: f"{v:.0f}%" for k, v in zones_for.items()}
-        if zones_against:
-            payload["Da dove concede (% xG)"] = {k: f"{v:.0f}%" for k, v in zones_against.items()}
-        if not vs_similar.empty:
-            payload[f"Contro squadre simili a {team}"] = {
-                r["Profilo simile al nostro"]: f"{r['Partite']} partite, {r['Record']}, diff. xG {r['Diff. xG/partita']} "
-                                               f"(vs altri {r['Diff. xG vs altri']})"
-                for _, r in vs_similar.iterrows()
-            }
-        system, user = llm.build_opponent_brief(team, opp, payload, league_name, season)
-        with st.spinner(f"Generazione con {st.session_state.backend}…"):
-            try:
-                st.session_state.opp_brief = (brief_key, llm.call_llm(user, st.session_state.backend, system))
-            except Exception as e:
-                st.session_state.opp_brief = None
-                st.error(f"Il backend LLM non ha risposto: `{type(e).__name__}: {e}`", icon="🤖")
-    saved = st.session_state.get("opp_brief")
-    if saved and saved[0] == brief_key:
-        st.markdown(saved[1])
-
+    st.subheader("Report pre-partita")
+    _narrative_block(
+        key=("opponent", league_name, season, team, opp),
+        fact_sheet=facts.opponent_facts(team, opp, s, rec, types, forms, last5,
+                                        zones_for, zones_against, ctx, vs_similar, len(opp_matches)),
+        kind="opponent", title=f"{opp}, prossimo avversario di {team}",
+    )
 
 with tab_avversario:
     _render_avversario()
@@ -733,12 +752,89 @@ with tab_confronti:
 
 # ── Tab Partita ───────────────────────────────────────────────────────────────
 
-with tab_partita:
+def _render_partita() -> None:
     st.header("Report partita")
-    st.info(
-        "Coming soon — event-level match report via StatsBomb (where available).",
-        icon="🎬",
+    try:
+        matches = dl.load_team_match_table(league_id, season, team)
+    except Exception as e:
+        _show_load_error("le partite della squadra", e)
+        return
+    if matches.empty:
+        st.info("Nessuna partita giocata in questa stagione.", icon="📅")
+        return
+
+    ms = matches.iloc[::-1].reset_index(drop=True)
+    labels = [
+        f"G{r['round']} · {r['date']:%d/%m} · {'vs' if r['venue'] == 'Casa' else '@'} {r['opponent']} "
+        f"{r['goals_for']}-{r['goals_against']}"
+        for _, r in ms.iterrows()
+    ]
+    choice = st.selectbox("Partita", labels, key=f"match_{team}_{season}")
+    mid = int(ms.loc[labels.index(choice), "match_id"])
+
+    try:
+        d = dl.match_report_data(mid)
+    except Exception as e:
+        _show_load_error("i dettagli della partita", e)
+        return
+    m, stats, shots, players = d["meta"], d["stats"], d["shots"], d["players"]
+    home, away = m["home"], m["away"]
+
+    st.subheader(f"{home} {m['home_goals']} – {m['away_goals']} {away}")
+    xg_row = stats[stats["Metrica"] == "xG"]
+    if not xg_row.empty:  # official match xG, same figure as the stats table
+        xg_h, xg_a = float(xg_row[home].iloc[0]), float(xg_row[away].iloc[0])
+    else:
+        xg_h = shots.loc[shots["side"] == "home", "xg"].sum() if not shots.empty else 0
+        xg_a = shots.loc[shots["side"] == "away", "xg"].sum() if not shots.empty else 0
+    st.caption(
+        f"Giornata {m['round']} · {m['date']} · xG {xg_h:.2f} – {xg_a:.2f} · "
+        f"Moduli: {m['home_formation'] or 'n/d'} ({m['home_coach'] or '—'}) vs "
+        f"{m['away_formation'] or 'n/d'} ({m['away_coach'] or '—'})"
     )
+
+    st.pyplot(viz.plot_match_shots(shots, home, away), use_container_width=True)
+    st.caption("Dimensione = xG del tiro · pieno = gol. Autogol esclusi.")
+    st.pyplot(viz.plot_xg_race(shots, home, away), use_container_width=True)
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown("**Statistiche**")
+        st.dataframe(stats, hide_index=True, use_container_width=True, height=560)
+    with c2:
+        st.markdown("**Migliori in campo (voto FotMob)**")
+        if not players.empty:
+            top = players.dropna(subset=["rating"]).sort_values("rating", ascending=False).head(8)
+            st.dataframe(
+                top[["player", "team", "rating", "goals", "assists", "xg", "xa"]].rename(columns={
+                    "player": "Giocatore", "team": "Squadra", "rating": "Voto", "goals": "Gol",
+                    "assists": "Assist", "xg": "xG", "xa": "xA"}),
+                hide_index=True, use_container_width=True,
+                column_config={"Voto": st.column_config.NumberColumn(format="%.1f")},
+            )
+        big = shots[shots["xg"] >= 0.3].sort_values("minute") if not shots.empty else shots
+        st.markdown("**Occasioni principali (xG ≥ 0,30)**")
+        if big.empty:
+            st.caption("Nessuna.")
+        for _, s in big.iterrows():
+            who = home if s["side"] == "home" else away
+            st.markdown(f"- {int(s['minute'])}' {s['player']} ({who}) — xG {s['xg']:.2f}"
+                        f"{' · **gol**' if s['is_goal'] else ''}")
+
+    st.divider()
+    st.subheader("Racconto della partita — LLM")
+    _narrative_block(
+        key=("match", mid),
+        fact_sheet=facts.match_facts(m, stats, shots, players),
+        kind="match",
+        title=f"{home} {m['home_goals']}-{m['away_goals']} {away}",
+    )
+    st.caption("I dati evento completi (passaggi, pressioni, reti di passaggi) sono disponibili solo per le "
+               "competizioni storiche di StatsBomb Open Data, non per le stagioni in corso.")
+
+
+with tab_partita:
+    _render_partita()
 
 # ── Tab Report ────────────────────────────────────────────────────────────────
 

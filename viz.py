@@ -456,3 +456,67 @@ def plot_percentile_radar(series: dict[str, dict[str, float]], title: str = "") 
         ax.set_title(title, color="white", fontsize=13, fontweight="bold", pad=18)
     plt.tight_layout()
     return fig
+
+
+def plot_match_shots(shots: pd.DataFrame, home: str, away: str) -> plt.Figure:
+    """
+    Both teams' shots on one full pitch (FotMob 105x68): home attacks right,
+    away is mirrored to attack left. Size = xG, filled = goal.
+    shots needs columns: side ('home'/'away'), x, y, xg, is_goal.
+    """
+    pitch = Pitch(pitch_type="uefa", pitch_color=config.PITCH_COLOR,
+                  line_color=config.LINE_COLOR, line_zorder=2)
+    fig, ax = pitch.draw(figsize=(10, 6.5))
+    _style_fig(fig)
+    if shots is None or shots.empty:
+        ax.text(52.5, 34, "Nessun tiro registrato", ha="center", color=config.NEUTRAL_COLOR)
+        return fig
+    for side, color in (("home", config.HOME_COLOR), ("away", config.AWAY_COLOR)):
+        s = shots[shots["side"] == side]
+        if s.empty:
+            continue
+        x = s["x"] if side == "home" else 105 - s["x"]
+        y = s["y"] if side == "home" else 68 - s["y"]
+        size = 60 + 900 * s["xg"].fillna(0.02).clip(0, 1)
+        goal = s["is_goal"].astype(bool)
+        pitch.scatter(x[~goal], y[~goal], s=size[~goal], ax=ax, facecolors="none",
+                      edgecolors=color, linewidths=1.3, alpha=0.8, zorder=3)
+        pitch.scatter(x[goal], y[goal], s=size[goal], ax=ax, color=color,
+                      edgecolors="white", linewidths=1, zorder=4)
+    xg_h = shots.loc[shots["side"] == "home", "xg"].sum()
+    xg_a = shots.loc[shots["side"] == "away", "xg"].sum()
+    ax.text(26, -3, f"← {away} · xG {xg_a:.2f}", ha="center", color=config.AWAY_COLOR, fontsize=11)
+    ax.text(79, -3, f"{home} · xG {xg_h:.2f} →", ha="center", color=config.HOME_COLOR, fontsize=11)
+    plt.tight_layout()
+    return fig
+
+
+def plot_xg_race(shots: pd.DataFrame, home: str, away: str) -> plt.Figure:
+    """Cumulative xG by minute for both teams, goals marked."""
+    fig, ax = plt.subplots(figsize=(10, 3.6))
+    _style_fig(fig)
+    ax.set_facecolor(config.PITCH_COLOR)
+    end = 95
+    if shots is not None and not shots.empty:
+        end = max(95, int(shots["minute"].max() or 90) + 3)
+    for side, name, color in (("home", home, config.HOME_COLOR), ("away", away, config.AWAY_COLOR)):
+        s = (shots[shots["side"] == side].sort_values("minute")
+             if shots is not None and not shots.empty else pd.DataFrame(columns=["minute", "xg", "is_goal"]))
+        mins = [0] + s["minute"].fillna(0).tolist() + [end]
+        cum = [0] + s["xg"].fillna(0).cumsum().tolist()
+        cum = cum + [cum[-1]]
+        ax.step(mins, cum, where="post", color=color, lw=2, label=f"{name} ({cum[-1]:.2f})")
+        g = s[s["is_goal"].astype(bool)]
+        if not g.empty:
+            g_cum = s["xg"].fillna(0).cumsum()[g.index]
+            ax.scatter(g["minute"], g_cum, color=color, edgecolors="white", s=70, zorder=5)
+    ax.axvline(45, color=config.LINE_COLOR, ls="--", lw=0.8)
+    ax.set_xlim(0, end)
+    ax.set_xlabel("Minuto", color="white")
+    ax.set_ylabel("xG cumulati", color="white")
+    ax.tick_params(colors="white")
+    for s in ax.spines.values():
+        s.set_color(config.LINE_COLOR)
+    ax.legend(frameon=False, labelcolor="white", loc="upper left")
+    plt.tight_layout()
+    return fig

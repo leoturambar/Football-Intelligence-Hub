@@ -822,3 +822,97 @@ def load_league_player_appearances(
             row.update(p.get("stats", {}))
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+# Labels for the per-match stat comparison (column from FM_STAT_KEYS → Italian)
+MATCH_STAT_LABELS = {
+    "possession":          "Possesso %",
+    "xg":                  "xG",
+    "xg_open_play":        "xG su azione",
+    "xg_set_play":         "xG da palla inattiva",
+    "xgot":                "xG nello specchio (xGOT)",
+    "shots":               "Tiri",
+    "shots_on_target":     "Tiri in porta",
+    "shots_inside_box":    "Tiri in area",
+    "big_chances":         "Grandi occasioni",
+    "big_chances_missed":  "Grandi occasioni sprecate",
+    "touches_opp_box":     "Tocchi nell'area avversaria (in attacco)",
+    "passes":              "Passaggi",
+    "passes_accurate":     "Passaggi riusciti",
+    "passes_opp_half":     "Passaggi giocati nella metà avversaria",
+    "long_balls_accurate": "Lanci lunghi riusciti",
+    "crosses_accurate":    "Cross riusciti",
+    "corners":             "Calci d'angolo",
+    "tackles":             "Contrasti",
+    "interceptions":       "Intercetti",
+    "clearances":          "Respinte difensive",
+    "saves":               "Parate del portiere",
+    "duels_won":           "Duelli vinti",
+    "aerials_won":         "Duelli aerei vinti",
+    "dribbles_succeeded":  "Dribbling riusciti",
+    "fouls":               "Falli",
+    "yellow_cards":        "Ammonizioni",
+    "red_cards":           "Espulsioni",
+}
+
+
+def match_report_data(match_id: int) -> dict:
+    """
+    Everything the match tab needs for one match:
+      meta   — home/away names, goals, formations, coaches, date, round
+      stats  — DataFrame [Metrica, home, away] in MATCH_STAT_LABELS order
+      shots  — DataFrame side ('home'/'away'), x, y, xg, is_goal, minute, player, situation
+      players — DataFrame team, side, player, minutes, rating, goals, assists, xg, xa, started
+    """
+    match = load_fotmob_match(match_id)
+    general = match.get("general") or {}
+    teams = (match.get("header") or {}).get("teams") or [{}, {}]
+    home, away = teams[0], teams[1]
+    lu = match.get("lineup") or {}
+    meta = {
+        "home": home.get("name"), "away": away.get("name"),
+        "home_goals": home.get("score"), "away_goals": away.get("score"),
+        "home_formation": (lu.get("home") or {}).get("formation"),
+        "away_formation": (lu.get("away") or {}).get("formation"),
+        "home_coach": (lu.get("home") or {}).get("coach"),
+        "away_coach": (lu.get("away") or {}).get("coach"),
+        "date": (general.get("matchTimeUTCDate") or "")[:10],
+        "round": general.get("matchRound"),
+    }
+
+    flat = _fm_flat_stats(match)
+    stats = pd.DataFrame([
+        {"Metrica": label, meta["home"]: flat[col][0], meta["away"]: flat[col][1]}
+        for col, label in MATCH_STAT_LABELS.items() if col in flat
+    ])
+
+    shots = pd.DataFrame([
+        {
+            "side": "home" if sh.get("teamId") == home.get("id") else "away",
+            "x": sh.get("x"), "y": sh.get("y"), "xg": sh.get("expectedGoals"),
+            "is_goal": sh.get("eventType") == "Goal",
+            "minute": sh.get("min"), "player": sh.get("playerName"),
+            "situation": sh.get("situation"), "on_target": sh.get("isOnTarget"),
+        }
+        for sh in match.get("shots", []) if not sh.get("isOwnGoal")
+    ])
+
+    starters = {s["id"] for side in ("home", "away") for s in (lu.get(side) or {}).get("starters", [])}
+    players = pd.DataFrame([
+        {
+            "team": meta["home"] if p.get("teamId") == home.get("id") else meta["away"],
+            "side": "home" if p.get("teamId") == home.get("id") else "away",
+            "player": p.get("name"),
+            "started": p.get("id") in starters,
+            "minutes": p["stats"].get("minutes_played"),
+            "rating": p["stats"].get("rating_title"),
+            "goals": p["stats"].get("goals", 0),
+            "assists": p["stats"].get("assists", 0),
+            "xg": p["stats"].get("expected_goals", 0),
+            "xa": p["stats"].get("expected_assists", 0),
+            "chances": p["stats"].get("chances_created", 0),
+            "recoveries": p["stats"].get("recoveries", 0),
+        }
+        for p in match.get("players", [])
+    ])
+    return {"meta": meta, "stats": stats, "shots": shots, "players": players}
