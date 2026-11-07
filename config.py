@@ -28,11 +28,21 @@ STATSBOMB_NOTABLE = [
 
 # Understat league slugs
 UNDERSTAT_LEAGUES = {
-    "Serie A":        "Serie_A",
+    "Serie A":        "Serie A",
     "Premier League": "EPL",
     "Bundesliga":     "Bundesliga",
-    "La Liga":        "La_liga",
-    "Ligue 1":        "Ligue_1",
+    "La Liga":        "La liga",
+    "Ligue 1":        "Ligue 1",
+}
+
+# FBref and Understat use different names for some clubs.
+# Keys are FBref names; values are the exact strings Understat expects in URLs.
+UNDERSTAT_TEAM_NAMES = {
+    "Inter":     "Inter",
+    "Milan":     "AC Milan",
+    "Roma":      "AS Roma",
+    "Napoli":    "Napoli",
+    "Juventus":  "Juventus",
 }
 
 # ── Role profiles ─────────────────────────────────────────────────────────────
@@ -154,3 +164,7 @@ STAT_TYPE_TABLE_KEYS = {
 
 DATA_DIR         = "data"
 CACHE_DAYS       = 3   # re-scrape FBref after N days
+
+# ── Browser ───────────────────────────────────────────────────────────────────
+
+BROWSER_PATH     = r"C:\Users\maver\AppData\Local\Programs\Opera\opera.exe"

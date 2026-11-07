@@ -8,3 +8,4 @@ statsbombpy>=1.1
 lxml>=4.9
 requests>=2.31
 anthropic>=0.30
+soccerdata>=0.3
