@@ -50,7 +50,8 @@ Reopen the terminal after running `setx`.
 
 **Ollama** — install from https://ollama.com, then:
 ```bash
-ollama pull qwen2.5:14b
+ollama pull qwen3.5:9b      # default narrative model
+ollama pull qwen2.5:14b     # optional alternative
 ```
 
 ## Launch from desktop (Windows)

@@ -194,7 +194,7 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Windows, Conda env: `football`
 - Python 3.11
 - ANTHROPIC_API_KEY set as system env var via `setx`
-- Ollama running locally on port 11434 with qwen2.5:14b
+- Ollama running locally on port 11434 with qwen3.5:9b (default) and qwen2.5:14b
 
 ## Coding conventions
 - Read existing files before modifying
