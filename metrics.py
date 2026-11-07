@@ -216,15 +216,3 @@ def strengths_weaknesses(ctx: pd.DataFrame, k: int = 3) -> tuple[pd.DataFrame, p
     return strengths, weaknesses
 
 
-def llm_payload(summary: dict, ctx: pd.DataFrame, record_str: str) -> dict:
-    """Compact, labelled dict for llm.build_squad_narrative."""
-    team_block = {METRICS[k]["label"]: fmt(k, v) for k, v in summary.items() if k in METRICS}
-    team_block["Record"] = record_str
-    payload = {"Partite selezionate": team_block}
-    if not ctx.empty:
-        payload["Posizione in campionato (stagione intera)"] = {
-            r["label"]: f"{fmt(r['metric'], r['value'])} — {r['rank']}° su {r['n']} "
-                        f"(media lega {fmt(r['metric'], r['league_avg'])})"
-            for _, r in ctx.iterrows()
-        }
-    return payload

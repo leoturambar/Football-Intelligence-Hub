@@ -17,7 +17,7 @@ without the transfer-scouting component.
 ### Level 1 — What the team does (own patterns)
 Aggregate stats over a selected match set: possession style, verticality,
 defensive intensity, attacking threat, set piece effectiveness.
-Source: FBref match-by-match + season stats.
+Source: FotMob match-by-match stats + season rankings.
 
 ### Level 2 — How the team reacts to context (conditional S&W)
 Performance split by opponent type. Answers questions like:
@@ -57,7 +57,9 @@ PPDA is therefore an estimate: opponent passes in their own half ÷
 - FotMob: working → **primary source** for current seasons (2018/19 onward).
 - FBref: behind a Cloudflare challenge; soccerdata + Opera hangs. Do not try
   to bypass it. Old cached CSVs in data/ (Serie A 24/25) still load.
-- Understat: site offline ("We will come back soon"); its loaders fail.
+- Understat: site offline ("We will come back soon").
+- FBref and Understat loaders were removed from data_loader.py (in git history
+  up to commit 891864b) — re-add only if a source becomes usable again.
 - StatsBomb Open Data: working (historical competitions only).
 
 ### FotMob (primary)
@@ -67,27 +69,6 @@ forever). League ids in `config.FOTMOB_LEAGUES` (verified at runtime against
 `details.name`). Loaders: `load_team_match_table`, `load_team_shots`,
 `load_league_team_stats` in data_loader.py. Stat key → column mapping in
 `FM_STAT_KEYS`; opponent values use the `opp_` prefix.
-
-### FBref via soccerdata (currently blocked)
-Aggregate and match-level stats for current seasons, all major leagues.
-
-**Native leagues (verified from soccerdata docs):**
-'Big 5 European Leagues Combined'
-'ENG-Premier League'
-'ESP-La Liga'
-'FRA-Ligue 1'
-'GER-Bundesliga'
-'ITA-Serie A'
-'INT-World Cup'
-'INT-Women's World Cup'
-'INT-European Championship'   # added in recent soccerdata versions
-Champions League requires custom league_dict.json config — add later.
-Usage: `sd.FBref('ITA-Serie A', '2425')`
-
-### Understat (xG layer)
-Shot-level data with x/y coordinates for top 5 leagues, current seasons.
-Leagues: EPL, La_liga, Bundesliga, Serie_A, Ligue_1
-Usage: direct requests to understat.com API (no auth required)
 
 ### StatsBomb Open Data (event-level layer)
 Event-level data (every pass, press, shot with coordinates). Free but
@@ -109,7 +90,7 @@ Verify IDs at runtime, not from memory.
 Compare team stats against:
 - Own league average (same season)
 - Other league averages (e.g. "can this Serie A team compete with PL sides?")
-FBref supports this natively — pull multi-league stats and normalize per-90.
+Not implemented yet: needs FotMob league stats for several leagues side by side.
 
 ---
 
@@ -157,8 +138,8 @@ for that role. Higher weight = more diagnostic for fit scoring.
 ---
 
 ## Formation data caveat
-FBref has formation per match but not always in clean parseable form.
-StatsBomb has it reliably for covered competitions.
+FotMob gives a formation for every lineup (used for roles).
+StatsBomb has it reliably for covered historical competitions.
 For unsupported competitions, formation analysis may be partial or require
 manual annotation. Flag this in the UI when data is unavailable.
 
@@ -171,11 +152,14 @@ Flat repo — all .py modules in root. Subfolders only for data (cache).
 |------|------|
 | app.py | Streamlit UI, tab routing |
 | config.py | Constants: league slugs, viz palette, LLM settings, tertile logic |
-| data_loader.py | FotMob + FBref + Understat + StatsBomb, with local CSV/JSON caching |
+| data_loader.py | FotMob (primary) + StatsBomb Open Data, with local CSV/JSON caching |
 | metrics.py | Subset-agnostic team metrics, league context, S&W, LLM payload |
-| viz.py | Pitch visualizations via mplsoccer: heatmaps, passing networks, Voronoi |
-| analysis.py | S&W scoring, opponent categorization, player-role fit, benchmarking |
-| llm.py | Dual backend: Anthropic API + Ollama local |
+| viz.py | Shot maps, xG race, role percentile bars, percentile radar |
+| analysis.py | Opponent tiers (Level 2), roles, role fit, on/off impact (Level 3) |
+| facts.py | Deterministic fact sheets + validator for the LLM narrative |
+| smoke_test.py | Live end-to-end check of the FotMob pipeline per league/season |
+| tests/ | Offline pytest suite on saved FotMob fixtures (tests/fixtures/fotmob) |
+| llm.py | Fact-grounded narrative: Ollama local (default) + Claude API backup |
 
 ---
 
@@ -196,6 +180,15 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - ANTHROPIC_API_KEY set as system env var via `setx`
 - Ollama running locally on port 11434 with qwen3.5:9b (default) and qwen2.5:14b
 
+## Testing
+- `python -m pytest -q tests` — offline, < 1 s. Run before every commit.
+- `python smoke_test.py [--players] [--league "Serie A"] [--season 2025/2026]`
+  — live check against FotMob; run when FotMob may have changed or before
+  trusting a new league/season. Verified 2026-11-07: all 5 leagues (current
+  season) + Serie A 2025/26 OK; Level 3 checked on Serie A and Premier League.
+- When FotMob changes its schema: refresh tests/fixtures/fotmob from
+  data/fotmob/ (same 3 Inter matches) and bump data_loader._FM_MATCH_VERSION.
+
 ## Coding conventions
 - Read existing files before modifying
 - Surgical edits only — never rewrite a full file unless explicitly asked
@@ -203,6 +196,8 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Heavy computations and scraping cached with `@st.cache_data`
 - Scraped data saved to `data/` as CSV/JSON to avoid repeated requests
 - Update README.md and requirements.txt when adding new dependencies
+- Own goals are not shots: FotMob lists them in the shotmap under the conceding
+  team's id; loaders skip them and match facts list them separately.
 - Before hardcoding any reference value (IDs, slugs, column names, metrics):
   search for the authoritative source or verify at runtime from the API
 

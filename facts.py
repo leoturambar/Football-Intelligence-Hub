@@ -124,6 +124,9 @@ def match_facts(meta: dict, stats: pd.DataFrame, shots: pd.DataFrame, players: p
             g = shots[(shots["side"] == side) & shots["is_goal"].astype(bool)].sort_values("minute")
             for _, s in g.iterrows():
                 lines.append(f"Gol di {s['player']} ({name}) al minuto {int(s['minute'])}, tiro da {_n(s['xg'])} xG.")
+        for og in meta.get("own_goals", []):
+            lines.append(f"Autogol di {og['player']} ({og['player_team']}) al minuto {int(og['minute'])}, "
+                         f"a favore di {og['benefits']}.")
         big = shots[(shots["xg"] >= 0.3) & ~shots["is_goal"].astype(bool)].sort_values("minute")
         for _, s in big.iterrows():
             name = h if s["side"] == "home" else a

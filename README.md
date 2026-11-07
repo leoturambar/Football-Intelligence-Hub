@@ -18,8 +18,8 @@ with an LLM coach that turns numbers into concrete decisions.
 | Source | Coverage | Used for | Status (Nov 2026) |
 |--------|----------|----------|-------------------|
 | FotMob | Top 5 leagues, 2018/19 → current season | Match stats, xG, shot maps, formations, league rankings | Primary |
-| FBref | All major leagues | Aggregate stats | Blocked by Cloudflare — cached CSVs only |
-| Understat | Top 5 leagues | xG | Site offline |
+| FBref | All major leagues | — | Blocked by Cloudflare; loader removed |
+| Understat | Top 5 leagues | — | Site offline; loader removed |
 | StatsBomb Open Data | Historical competitions (Euro 2020, etc.) | Event-level viz | Working |
 
 FotMob data comes from the unofficial JSON endpoints its website uses; requests are
@@ -27,7 +27,7 @@ throttled and cached in `data/fotmob/`. Personal / educational use only.
 
 ## Stack
 
-Python · Streamlit · Pandas · Plotly · mplsoccer · soccerdata · Anthropic API · Ollama
+Python · Streamlit · Pandas · mplsoccer · statsbombpy · Ollama · Anthropic API (optional)
 
 ## Setup
 
@@ -54,6 +54,13 @@ ollama pull qwen3.5:9b      # default narrative model
 ollama pull qwen2.5:14b     # optional alternative
 ```
 
+## Tests
+
+```bash
+python -m pytest -q tests          # offline, uses saved FotMob fixtures
+python smoke_test.py               # live check of all 5 leagues
+```
+
 ## Launch from desktop (Windows)
 
 Double-click `launch.bat`.
@@ -68,6 +75,9 @@ football-intelligence-hub/
 ├── metrics.py
 ├── viz.py
 ├── analysis.py
+├── facts.py
+├── smoke_test.py
+├── tests/
 ├── llm.py
 ├── data/
 ├── CLAUDE.md
