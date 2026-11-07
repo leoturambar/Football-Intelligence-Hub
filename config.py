@@ -1,17 +1,26 @@
 # ── Competitions ──────────────────────────────────────────────────────────────
 
-# FBref leagues — VERSIONE CORRETTA
-
-# FotMob league IDs (primary source for current seasons since Nov 2026:
+# FotMob competition IDs (primary source for current seasons since Nov 2026:
 # FBref is behind a Cloudflare challenge, Understat is offline).
 # Verified 2026-11-07 via /api/data/leagues?id=… → details.name.
-FOTMOB_LEAGUES = {
+FOTMOB_DOMESTIC = {
     "Serie A":        55,
     "Premier League": 47,
     "La Liga":        87,
     "Bundesliga":     54,
     "Ligue 1":        53,
+    "Serie B":        86,
+    "Eredivisie":     57,
+    "Liga Portugal":  61,
 }
+# European cups: FotMob lists the league phase (36 teams, 8 rounds; 6 for the
+# Conference League). Few matches per team → small samples everywhere.
+FOTMOB_CUPS = {
+    "Champions League":  42,
+    "Europa League":     73,
+    "Conference League": 10216,
+}
+FOTMOB_LEAGUES = {**FOTMOB_DOMESTIC, **FOTMOB_CUPS}
 FOTMOB_REQUEST_DELAY = 0.6   # seconds between live FotMob requests
 FOTMOB_LEAGUE_CACHE_HOURS = 12
 

@@ -148,11 +148,13 @@ manual annotation. Flag this in the UI when data is unavailable.
 ---
 
 ## Architecture
-Flat repo — all .py modules in root. Subfolders only for data (cache).
+Flat repo — all .py modules in root. Subfolders only for data (cache) and tests.
 
 | File | Role |
 |------|------|
-| app.py | Streamlit UI, tab routing |
+| app.py | Entry point: page config, sidebar selection → ui_common.Ctx, tab routing |
+| ui_common.py | Shared UI: Ctx, errors, narrative block, league/player data gates, reference season |
+| tab_*.py | One module per tab (squadra, avversario, giocatore, confronti, partita, report), each `render(ctx)` |
 | config.py | Constants: league slugs, viz palette, LLM settings, tertile logic |
 | data_loader.py | FotMob (primary) + StatsBomb Open Data, with local CSV/JSON caching |
 | metrics.py | Subset-agnostic team metrics, league context, S&W, LLM payload |
@@ -184,7 +186,8 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Ollama running locally on port 11434 with qwen3.5:9b (default) and qwen2.5:14b
 
 ## Testing
-- `python -m pytest -q tests` — offline, < 1 s. Run before every commit.
+- `python -m pytest -q` — offline, ~15 s (52 tests incl. Streamlit AppTest UI
+  tests that run app.py on the fixtures). Run before every commit.
 - `python smoke_test.py [--players] [--league "Serie A"] [--season 2025/2026]`
   — live check against FotMob; run when FotMob may have changed or before
   trusting a new league/season. Verified 2026-11-07: all 5 leagues (current
@@ -201,6 +204,8 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Update README.md and requirements.txt when adding new dependencies
 - Own goals are not shots: FotMob lists them in the shotmap under the conceding
   team's id; loaders skip them and match facts list them separately.
+- Widget keys must not contain '/' (seasons are "2026/2027"): replace it.
+- Use width="stretch", not the removed use_container_width.
 - Before hardcoding any reference value (IDs, slugs, column names, metrics):
   search for the authoritative source or verify at runtime from the API
 
@@ -231,6 +236,11 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Tab Confronti: players of one role (up to 4, overlaid percentile radar,
   per-90 values, league leaderboard by role fit) and team vs team (metrics
   side by side with winner, opponent-type tiers).
+- Competitions: 8 domestic leagues (big 5 + Serie B, Eredivisie, Liga Portugal)
+  and 3 European cups (league phase only) — all pass smoke_test.py. Cross-league
+  comparison uses domestic leagues only (config.FOTMOB_DOMESTIC).
+- Role fit can add the previous season as reference pool (checkbox in
+  Giocatore/Confronti; analysis.role_pool(..., ref)).
 - Tab Report: HTML export (team / opponent / match) with embedded charts,
   verified LLM text (optional) and the fact sheet; PDF via browser print.
 - Tab Partita: match report from FotMob (both teams' shots on one pitch,

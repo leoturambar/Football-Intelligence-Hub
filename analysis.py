@@ -376,16 +376,27 @@ def _pct_rank(values: pd.Series, x, lower_better: bool) -> float:
     return 100 - p if lower_better else p
 
 
-def role_pool(role: str, table: pd.DataFrame) -> pd.DataFrame:
-    return table[(table["role"] == role) & (table["minutes"] >= config.PLAYER_MIN_MINUTES)]
+def role_pool(role: str, table: pd.DataFrame, ref: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    Benchmark players for *role*: current-season players with enough minutes,
+    plus (optionally) the same role from a reference table — typically the
+    previous season — to stabilise percentiles early in the season.
+    """
+    pool = table[(table["role"] == role) & (table["minutes"] >= config.PLAYER_MIN_MINUTES)]
+    if ref is not None and not ref.empty:
+        extra = ref[(ref["role"] == role) & (ref["minutes"] >= config.PLAYER_MIN_MINUTES)]
+        pool = pd.concat([pool, extra], ignore_index=True)
+    return pool
 
 
-def role_fit(player: pd.Series, role: str, table: pd.DataFrame) -> tuple[float, pd.DataFrame]:
+def role_fit(player: pd.Series, role: str, table: pd.DataFrame,
+             ref: pd.DataFrame | None = None) -> tuple[float, pd.DataFrame]:
     """
     Weighted mean percentile of *player* against league players whose main
-    role is *role* (≥ PLAYER_MIN_MINUTES). Returns (score 0–100, detail).
+    role is *role* (≥ PLAYER_MIN_MINUTES), optionally including a reference
+    season (*ref*). Returns (score 0–100, detail).
     """
-    pool = role_pool(role, table)
+    pool = role_pool(role, table, ref)
     if len(pool) < config.ROLE_MIN_POOL:
         return np.nan, pd.DataFrame()
     rows = []
@@ -405,7 +416,7 @@ def role_fit(player: pd.Series, role: str, table: pd.DataFrame) -> tuple[float, 
     return float(np.average(d["Percentile"], weights=d["Peso"])), d
 
 
-def team_player_report(team: str, table: pd.DataFrame) -> pd.DataFrame:
+def team_player_report(team: str, table: pd.DataFrame, ref: pd.DataFrame | None = None) -> pd.DataFrame:
     """
     For every player of *team* with enough minutes: fit in the main role,
     best alternative role (mismatch) and weak-link flag.
@@ -413,13 +424,13 @@ def team_player_report(team: str, table: pd.DataFrame) -> pd.DataFrame:
     t = table[(table["team"] == team) & (table["minutes"] >= config.PLAYER_MIN_MINUTES)]
     rows = []
     for _, p in t.iterrows():
-        fit, _ = role_fit(p, p["role"], table)
+        fit, _ = role_fit(p, p["role"], table, ref)
         best_role, best_fit = None, np.nan
         family = ROLE_FAMILY.get(p["role"])
         candidates = [] if p["role"] == "Portiere" else [
             r for r in ROLES if r != "Portiere" and ROLE_FAMILY.get(r) != family]
         for r in candidates:
-            f_alt, _ = role_fit(p, r, table)
+            f_alt, _ = role_fit(p, r, table, ref)
             if not np.isnan(f_alt) and (np.isnan(best_fit) or f_alt > best_fit):
                 best_role, best_fit = r, f_alt
         rows.append({
@@ -463,17 +474,18 @@ def on_off_impact(team_matches: pd.DataFrame, apps: pd.DataFrame, team: str,
     return df.sort_values("Impatto xG/partita", ascending=False).reset_index(drop=True) if not df.empty else df
 
 
-def role_leaderboard(role: str, table: pd.DataFrame) -> pd.DataFrame:
+def role_leaderboard(role: str, table: pd.DataFrame, ref: pd.DataFrame | None = None) -> pd.DataFrame:
     """
-    Every league player whose main role is *role* (enough minutes), ranked by
-    role fit. One percentile column per profile metric.
+    Every current-season player whose main role is *role* (enough minutes),
+    ranked by role fit against the benchmark pool (current + optional *ref*).
+    One percentile column per profile metric.
     """
-    pool = role_pool(role, table)
-    if len(pool) < config.ROLE_MIN_POOL:
+    current = role_pool(role, table)
+    if current.empty or len(role_pool(role, table, ref)) < config.ROLE_MIN_POOL:
         return pd.DataFrame()
     rows = []
-    for _, p in pool.iterrows():
-        fit, detail = role_fit(p, role, table)
+    for _, p in current.iterrows():
+        fit, detail = role_fit(p, role, table, ref)
         row = {"player_id": p["player_id"], "Giocatore": p["player"], "Squadra": p["team"],
                "Minuti": int(p["minutes"]), "Voto medio FotMob": p.get("rating"), "Idoneità": fit}
         row.update({f"{m} (pct)": v for m, v in zip(detail.get("Metrica", []), detail.get("Percentile", []))})

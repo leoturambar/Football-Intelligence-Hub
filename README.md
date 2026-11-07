@@ -20,7 +20,7 @@ with an LLM coach that turns numbers into concrete decisions.
 
 | Source | Coverage | Used for | Status (Nov 2026) |
 |--------|----------|----------|-------------------|
-| FotMob | Top 5 leagues, 2018/19 → current season | Match stats, xG, shot maps, formations, league rankings | Primary |
+| FotMob | Big 5 + Serie B, Eredivisie, Liga Portugal, Champions/Europa/Conference League; 2018/19 → current | Match stats, xG, shot maps, formations, league rankings | Primary |
 | FBref | All major leagues | — | Blocked by Cloudflare; loader removed |
 | Understat | Top 5 leagues | — | Site offline; loader removed |
 | StatsBomb Open Data | Historical competitions (Euro 2020, etc.) | Event-level viz | Working |
@@ -60,8 +60,8 @@ ollama pull qwen2.5:14b     # optional alternative
 ## Tests
 
 ```bash
-python -m pytest -q tests          # offline, uses saved FotMob fixtures
-python smoke_test.py               # live check of all 5 leagues
+python -m pytest -q                # offline: logic + UI (AppTest) on saved FotMob fixtures
+python smoke_test.py               # live check of every competition
 ```
 
 ## Launch from desktop (Windows)
@@ -73,6 +73,8 @@ Double-click `launch.bat`.
 ```
 football-intelligence-hub/
 ├── app.py
+├── ui_common.py
+├── tab_*.py           # one module per tab
 ├── config.py
 ├── data_loader.py
 ├── metrics.py

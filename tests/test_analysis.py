@@ -143,3 +143,15 @@ def test_role_fit_needs_minimum_pool():
 def test_lower_is_better_metrics_are_inverted():
     pool = pd.Series([1.0, 2.0, 3.0, 4.0])
     assert analysis._pct_rank(pool, 1.0, lower_better=True) > analysis._pct_rank(pool, 4.0, lower_better=True)
+
+
+def test_reference_season_extends_the_pool():
+    cur = _player_table().head(4)                     # too few on its own
+    prev = _player_table().assign(player_id=lambda d: d["player_id"] + 100)
+    assert len(analysis.role_pool("Centravanti", cur)) == 4
+    assert len(analysis.role_pool("Centravanti", cur, prev)) == 24
+    fit_alone, _ = analysis.role_fit(cur.iloc[0], "Centravanti", cur)
+    fit_ref, _ = analysis.role_fit(cur.iloc[0], "Centravanti", cur, prev)
+    assert np.isnan(fit_alone) and not np.isnan(fit_ref)
+    board = analysis.role_leaderboard("Centravanti", cur, prev)
+    assert len(board) == 4                            # ranks only current-season players
