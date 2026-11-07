@@ -4,7 +4,8 @@ import requests
 import anthropic
 from config import (
     CLAUDE_MODEL, OLLAMA_MODEL, OLLAMA_URL,
-    LLM_MAX_TOKENS, LLM_TEMPERATURE
+    LLM_MAX_TOKENS, LLM_TEMPERATURE,
+    CLAUDE_MAX_TOKENS, CLAUDE_EFFORT,
 )
 
 # ── System prompts ────────────────────────────────────────────────────────────
@@ -172,16 +173,25 @@ def call_llm(prompt: str, backend: str, system: str = "") -> str:
 
 
 def _call_claude(prompt: str, system: str) -> str:
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    # Credentials resolved by the SDK (ANTHROPIC_API_KEY or `ant auth login`).
+    client = anthropic.Anthropic()
     kwargs = {
-        "model":      CLAUDE_MODEL,
-        "max_tokens": LLM_MAX_TOKENS,
-        "messages":   [{"role": "user", "content": prompt}],
+        "model":         CLAUDE_MODEL,
+        "max_tokens":    CLAUDE_MAX_TOKENS,
+        "output_config": {"effort": CLAUDE_EFFORT},
+        "messages":      [{"role": "user", "content": prompt}],
+        # Server-side fallback: if the model declines, the API retries on a
+        # fallback model within the same call.
+        "betas":         ["server-side-fallback-2026-07-01"],
+        "extra_body":    {"fallbacks": "default"},
     }
     if system:
         kwargs["system"] = system
-    response = client.messages.create(**kwargs)
-    return response.content[0].text
+    response = client.beta.messages.create(**kwargs)
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude ha rifiutato la richiesta.")
+    # Thinking blocks precede the text block: pick the text explicitly.
+    return "".join(b.text for b in response.content if b.type == "text")
 
 
 def _call_ollama(prompt: str, system: str) -> str:

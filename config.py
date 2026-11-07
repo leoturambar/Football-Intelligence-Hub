@@ -117,7 +117,9 @@ RADAR_BG       = "#1a1a2e"
 
 LLM_BACKENDS     = ["Ollama (locale)", "Claude API"]
 DEFAULT_BACKEND  = "Ollama (locale)"
-CLAUDE_MODEL     = "claude-sonnet-4-20250514"
+CLAUDE_MODEL     = "claude-sonnet-5-5"
+CLAUDE_MAX_TOKENS = 16000  # room for adaptive thinking + narrative
+CLAUDE_EFFORT    = "medium"
 OLLAMA_MODEL     = "qwen2.5:14b"
 OLLAMA_URL       = "http://localhost:11434/api/generate"
 LLM_MAX_TOKENS   = 900
