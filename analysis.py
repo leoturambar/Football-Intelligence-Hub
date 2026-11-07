@@ -461,3 +461,25 @@ def on_off_impact(team_matches: pd.DataFrame, apps: pd.DataFrame, team: str,
         })
     df = pd.DataFrame(rows)
     return df.sort_values("Impatto xG/partita", ascending=False).reset_index(drop=True) if not df.empty else df
+
+
+def role_leaderboard(role: str, table: pd.DataFrame) -> pd.DataFrame:
+    """
+    Every league player whose main role is *role* (enough minutes), ranked by
+    role fit. One percentile column per profile metric.
+    """
+    pool = role_pool(role, table)
+    if len(pool) < config.ROLE_MIN_POOL:
+        return pd.DataFrame()
+    rows = []
+    for _, p in pool.iterrows():
+        fit, detail = role_fit(p, role, table)
+        row = {"player_id": p["player_id"], "Giocatore": p["player"], "Squadra": p["team"],
+               "Minuti": int(p["minutes"]), "Voto medio FotMob": p.get("rating"), "Idoneità": fit}
+        row.update({f"{m} (pct)": v for m, v in zip(detail.get("Metrica", []), detail.get("Percentile", []))})
+        rows.append(row)
+    df = pd.DataFrame(rows).sort_values("Idoneità", ascending=False).reset_index(drop=True)
+    df.insert(0, "#", range(1, len(df) + 1))
+    pct_cols = [c for c in df.columns if c.endswith("(pct)")]
+    df[pct_cols] = df[pct_cols].round(0)
+    return df

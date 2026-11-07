@@ -478,15 +478,17 @@ def _player_data(league_id: int, season: str | None, n_matches: int):
     return apps, analysis.player_season_table(apps)
 
 
-def _render_giocatore() -> None:
-    st.header(f"Analisi giocatori — {team}")
-
+def _league_player_data(key: str):
+    """
+    League-wide (apps, player table), downloading missing matches on request.
+    Returns None while data is missing or on error (the UI explains why).
+    """
     try:
         missing = dl.fotmob_missing_match_ids(league_id, season)
         n_done = len(dl.fotmob_finished_match_ids(league_id, season))
     except Exception as e:
         _show_load_error("il calendario", e)
-        return
+        return None
 
     if missing:
         est = max(1, round(len(missing) * (config.FOTMOB_REQUEST_DELAY + 0.6) / 60))
@@ -496,8 +498,8 @@ def _render_giocatore() -> None:
             f"(circa {est} min la prima volta, poi restano in cache).",
             icon="⬇️",
         )
-        if not st.button("Scarica dati del campionato", type="primary"):
-            return
+        if not st.button("Scarica dati del campionato", type="primary", key=f"dl_{key}"):
+            return None
         bar = st.progress(0.0, text="Download partite…")
         try:
             dl.load_league_player_appearances(
@@ -506,13 +508,23 @@ def _render_giocatore() -> None:
             )
         except Exception as e:
             _show_load_error("le partite del campionato", e)
-            return
+            return None
         bar.empty()
 
     apps, table = _player_data(league_id, season, n_done)
     if table.empty:
         st.info("Nessun dato giocatori disponibile.", icon="👤")
+        return None
+    return apps, table
+
+
+def _render_giocatore() -> None:
+    st.header(f"Analisi giocatori — {team}")
+
+    data = _league_player_data("gioc")
+    if data is None:
         return
+    apps, table = data
 
     report = analysis.team_player_report(team, table)
     st.caption(
@@ -613,12 +625,111 @@ with tab_giocatore:
 
 # ── Tab Confronti ─────────────────────────────────────────────────────────────
 
-with tab_confronti:
+def _render_confronti() -> None:
     st.header("Confronti")
-    st.info(
-        "Coming soon — cross-team role comparisons, overlaid radar charts.",
-        icon="📡",
+    mode = st.radio("Cosa confrontare", ["Giocatori dello stesso ruolo", "Squadre"], horizontal=True)
+
+    # ── Teams ─────────────────────────────────────────────────────────────────
+    if mode == "Squadre":
+        others = [t for t in teams if t != team]
+        other = st.selectbox("Confronta con", others, key=f"cmp_team_{team}_{season}")
+        try:
+            a = dl.load_team_match_table(league_id, season, team)
+            b = dl.load_team_match_table(league_id, season, other)
+        except Exception as e:
+            _show_load_error("le partite delle squadre", e)
+            return
+        if a.empty or b.empty:
+            st.info("Una delle due squadre non ha ancora partite giocate.", icon="📅")
+            return
+        st.caption(f"Stagione intera · {team}: {metrics.record(a)} · {other}: {metrics.record(b)}")
+        table = metrics.compare(a, b, team, other)
+        sa, sb = metrics.summarize(a), metrics.summarize(b)
+        better = []
+        for key, meta in metrics.METRICS.items():
+            va, vb = sa.get(key), sb.get(key)
+            if meta["better"] is None or va is None or vb is None or pd.isna(va) or pd.isna(vb) or va == vb:
+                better.append("")
+            else:
+                a_wins = (va > vb) if meta["better"] == "high" else (va < vb)
+                better.append(team if a_wins else other)
+        table["Meglio"] = better
+        st.dataframe(table, hide_index=True, use_container_width=True)
+
+        league_stats, profiles = _league_profiles()
+        if not profiles.empty:
+            ta, tb = analysis.team_types(team, profiles), analysis.team_types(other, profiles)
+            st.markdown("**Profilo di gioco (fasce del campionato)**")
+            st.dataframe(pd.DataFrame({
+                "Dimensione": [analysis.OPPONENT_DIMENSIONS[d]["label"] for d in ta],
+                team: list(ta.values()),
+                other: [tb.get(d, "—") for d in ta],
+            }), hide_index=True, use_container_width=True)
+        return
+
+    # ── Players ───────────────────────────────────────────────────────────────
+    data = _league_player_data("cmp")
+    if data is None:
+        return
+    apps, table = data
+    roles = [r for r in analysis.ROLES if len(analysis.role_pool(r, table)) >= config.ROLE_MIN_POOL]
+    own = analysis.team_player_report(team, table)
+    own_roles = [r for r in own.get("Ruolo", pd.Series(dtype=str)) if r in roles and r != "Portiere"]
+    default_role = own_roles[0] if own_roles else roles[0]
+    role = st.selectbox("Ruolo", roles, index=roles.index(default_role), key=f"cmp_role_{team}_{season}")
+
+    board = analysis.role_leaderboard(role, table)
+    if board.empty:
+        st.info("Troppi pochi giocatori in questo ruolo per un confronto.", icon="📏")
+        return
+
+    label = lambda r: f"{r['Giocatore']} ({r['Squadra']})"  # noqa: E731
+    board["_label"] = board.apply(label, axis=1)
+    mine = board[board["Squadra"] == team]["_label"].tolist()
+    best_others = board[board["Squadra"] != team]["_label"].head(3 if mine else 4).tolist()
+    picked = st.multiselect(
+        "Giocatori (massimo 4)", board["_label"].tolist(),
+        default=(mine[:1] + best_others)[:4], max_selections=4,
+        key=f"cmp_players_{team}_{season}_{role}",
     )
+
+    if picked:
+        series = {}
+        for lab in picked:
+            pid = board.loc[board["_label"] == lab, "player_id"].iloc[0]
+            p = table[table["player_id"] == pid].iloc[0]
+            _, detail = analysis.role_fit(p, role, table)
+            series[lab] = dict(zip(detail["Metrica"], detail["Percentile"]))
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.pyplot(viz.plot_percentile_radar(series, title=role), use_container_width=True)
+        with c2:
+            st.markdown("**Valori per 90 minuti / %**")
+            metric_ids = [m for m in config.ROLE_PROFILES[role] if m in table.columns]
+            vals = {}
+            for lab in picked:
+                pid = board.loc[board["_label"] == lab, "player_id"].iloc[0]
+                p = table[table["player_id"] == pid].iloc[0]
+                vals[lab.split(" (")[0]] = [p.get(m) for m in metric_ids]
+            vt = pd.DataFrame(vals, index=[analysis.PLAYER_METRICS[m][0] for m in metric_ids])
+            st.dataframe(vt.round(2), use_container_width=True)
+        st.caption("Radar: percentile di ogni giocatore tra i pari ruolo del campionato "
+                   f"(almeno {config.PLAYER_MIN_MINUTES} minuti). 50 = mediana.")
+
+    st.divider()
+    st.subheader(f"Classifica {role.lower()} — {league_name} {season}")
+    teams_filter = st.multiselect("Filtra squadre", sorted(board["Squadra"].unique()),
+                                  key=f"cmp_teams_{role}")
+    view = board if not teams_filter else board[board["Squadra"].isin(teams_filter)]
+    st.dataframe(
+        view.drop(columns=["player_id", "_label"]), hide_index=True, use_container_width=True,
+        column_config={"Idoneità": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
+                       "Voto medio FotMob": st.column_config.NumberColumn(format="%.2f")},
+    )
+
+
+with tab_confronti:
+    _render_confronti()
 
 # ── Tab Partita ───────────────────────────────────────────────────────────────
 

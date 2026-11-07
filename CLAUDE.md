@@ -229,6 +229,9 @@ third of Serie A — opponents move through midfield with minimal resistance."
   players (config.ROLE_PROFILES, PLAYER_MIN_MINUTES), alternative-role
   similarity (different role family only), weak links (< 30), on/off impact.
   Needs every finished league match cached (download button, ~1–4 min once).
+- Tab Confronti: players of one role (up to 4, overlaid percentile radar,
+  per-90 values, league leaderboard by role fit) and team vs team (metrics
+  side by side with winner, opponent-type tiers).
 - Local LLM (qwen2.5:14b) misreads payload numbers (e.g. wrong formation);
   treat its narrative as a draft. Claude backend untested (no API credit).
 

@@ -5,6 +5,8 @@ All public functions accept a DataFrame + metadata and return a
 matplotlib Figure.  Callers (app.py) control rendering via st.pyplot(fig).
 """
 
+import textwrap
+
 import numpy as np
 import matplotlib.pyplot as plt
 from mplsoccer import Pitch, Radar, VerticalPitch
@@ -415,5 +417,42 @@ def plot_role_percentiles(detail: pd.DataFrame, title: str = "") -> plt.Figure:
         s.set_visible(False)
     ax.set_xlabel("Percentile nel ruolo (50 = mediana del campionato)", color="white", fontsize=9)
     _set_title(ax, title)
+    plt.tight_layout()
+    return fig
+
+
+def plot_percentile_radar(series: dict[str, dict[str, float]], title: str = "") -> plt.Figure:
+    """
+    Overlaid polar chart of league percentiles (0-100) for up to 4 players.
+    series: {player label: {metric label: percentile}} — same metrics for all.
+    """
+    palette = [config.HOME_COLOR, config.AWAY_COLOR, config.NEUTRAL_COLOR, config.ACCENT_COLOR]
+    labels = list(next(iter(series.values())).keys()) if series else []
+    fig = plt.figure(figsize=(7, 7))
+    _style_fig(fig)
+    ax = fig.add_subplot(111, polar=True)
+    ax.set_facecolor(config.PITCH_COLOR)
+    if len(labels) < 3:
+        ax.text(0, 0, "Metriche insufficienti", ha="center", color=config.NEUTRAL_COLOR)
+        return fig
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+    for (name, vals), color in zip(series.items(), palette):
+        v = [float(vals.get(l, np.nan)) for l in labels]
+        v = [0.0 if np.isnan(x) else x for x in v]
+        v += v[:1]
+        ax.plot(angles, v, color=color, lw=2, label=name)
+        ax.fill(angles, v, color=color, alpha=0.12)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([25, 50, 75])
+    ax.set_yticklabels(["25", "50", "75"], color="#999999", fontsize=7)
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels([textwrap.fill(l, 16) for l in labels], color="white", fontsize=8)
+    ax.grid(color=config.LINE_COLOR, alpha=0.6)
+    ax.spines["polar"].set_color(config.LINE_COLOR)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=2, frameon=False,
+              labelcolor="white", fontsize=9)
+    if title:
+        ax.set_title(title, color="white", fontsize=13, fontweight="bold", pad=18)
     plt.tight_layout()
     return fig
