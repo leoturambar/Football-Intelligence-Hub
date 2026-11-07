@@ -44,6 +44,10 @@ METRICS: dict[str, dict] = {
     "def_actions_pm":       {"label": "Contrasti + intercetti / partita", "fmt": "{:.1f}", "better": None},
     "aerial_win_pct":       {"label": "Duelli aerei vinti %",           "fmt": "{:.0f}",  "better": "high"},
     "clean_sheets":         {"label": "Porta inviolata",                "fmt": "{:.0f}",  "better": "high"},
+    # league-level only (from FotMob season rankings)
+    "shots_on_target_pm":   {"label": "Tiri in porta / partita",        "fmt": "{:.1f}",  "better": "high"},
+    "passes_accurate_pm":   {"label": "Passaggi riusciti / partita",    "fmt": "{:.0f}",  "better": None},
+    "press_high_pm":        {"label": "Palloni recuperati nel terzo offensivo / partita", "fmt": "{:.1f}", "better": None},
 }
 
 
@@ -156,6 +160,9 @@ _LEAGUE_MAP = {
     "big_chances_pm": ("big_chances_total",   True,  "high"),
     "box_touches_pm": ("touches_opp_box_total", True, "high"),
     "def_actions_pm": (None,                  False, None),
+    "shots_on_target_pm": ("shots_on_target_pm", False, "high"),
+    "passes_accurate_pm": ("passes_accurate_pm", False, None),
+    "press_high_pm":  ("poss_won_att_3rd_pm",   False, None),
 }
 
 
@@ -216,3 +223,57 @@ def strengths_weaknesses(ctx: pd.DataFrame, k: int = 3) -> tuple[pd.DataFrame, p
     return strengths, weaknesses
 
 
+
+
+# ── Cross-league comparison ───────────────────────────────────────────────────
+# FotMob league stats are raw season numbers: they are NOT adjusted for league
+# strength. A team's "equivalent position" in another league says where its
+# numbers would sit there, not how it would actually perform against those sides.
+
+def league_averages(stats_by_league: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Average team value per metric, one column per league."""
+    cols = {}
+    for name, lg in stats_by_league.items():
+        if lg is None or lg.empty:
+            continue
+        cols[name] = league_table(lg).mean()
+    df = pd.DataFrame(cols)
+    # league-wide means of these are identical or mirror another row by construction
+    skip = {"possession", "xg_diff_pm", "ga_pm", "xga_pm"}
+    df = df.loc[[m for m in METRICS if m in df.index and m not in skip]]
+    df.index = [METRICS[m]["label"] for m in df.index]
+    return df
+
+
+def _equivalent_rank(values: pd.Series, v: float, better: str | None) -> int:
+    values = values.dropna()
+    if better == "low":
+        return int((values < v).sum()) + 1
+    return int((values > v).sum()) + 1  # "high" or style metrics: from the top
+
+
+def equivalent_positions(team: str, own_league: str,
+                         stats_by_league: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    For each metric: the team's value, its rank in its own league and the rank
+    the same value would have in every other league ('n' = league size).
+    """
+    tables = {n: league_table(lg) for n, lg in stats_by_league.items() if lg is not None and not lg.empty}
+    if own_league not in tables or team not in tables[own_league].index:
+        return pd.DataFrame()
+    own = tables[own_league]
+    rows = []
+    for metric in [m for m in METRICS if m in own.columns]:
+        better = METRICS[metric]["better"]
+        v = own.loc[team, metric]
+        if pd.isna(v):
+            continue
+        row = {"Metrica": METRICS[metric]["label"], "Valore": fmt(metric, v)}
+        for name, t in tables.items():
+            if metric not in t:
+                continue
+            others = t[metric].drop(index=team, errors="ignore") if name == own_league else t[metric]
+            rank = _equivalent_rank(others, v, better)
+            row[name] = f"{rank}° / {len(t[metric].dropna())}"
+        rows.append(row)
+    return pd.DataFrame(rows)

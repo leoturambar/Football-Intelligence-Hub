@@ -7,11 +7,14 @@ with an LLM coach that turns numbers into concrete decisions.
 
 ## Features
 
-- Team analysis: S&W report, heatmaps, pressing intensity, passing structure
-- Player-role fit: radar vs. ideal profile per position
-- Role comparisons: overlay players across teams for the same position
-- Match report: event-level viz when StatsBomb data is available (Voronoi, set pieces, transitions)
-- Exportable reports: Italia post-mortem, scouting reports, match reports
+- **Squadra** — key metrics, shot maps, league ranks, strengths & weaknesses, performance by
+  opponent type (pressing, possession, attack, defence tertiles), subset filters and comparisons
+- **Avversario** — next-opponent report: profile, where they create/concede, record vs teams like yours
+- **Giocatore** — roles from lineups, role fit vs league peers, weak links, with/without impact
+- **Confronti** — players of a role (overlaid radar, leaderboard), team vs team, league vs league
+- **Partita** — both teams' shots, xG race, stats, top-rated players
+- **Report** — self-contained HTML export of team, opponent and match reports (print to PDF)
+- **Narrative** — local LLM writes only from code-computed facts; every number is checked
 
 ## Data sources
 
@@ -76,6 +79,7 @@ football-intelligence-hub/
 ├── viz.py
 ├── analysis.py
 ├── facts.py
+├── report.py
 ├── smoke_test.py
 ├── tests/
 ├── llm.py

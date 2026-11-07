@@ -90,7 +90,9 @@ Verify IDs at runtime, not from memory.
 Compare team stats against:
 - Own league average (same season)
 - Other league averages (e.g. "can this Serie A team compete with PL sides?")
-Not implemented yet: needs FotMob league stats for several leagues side by side.
+Done (Tab Confronti → Campionati): league averages for the 5 leagues and each
+team's equivalent position in every league (metrics.equivalent_positions).
+Raw numbers, NOT adjusted for league strength — the UI says so.
 
 ---
 
@@ -157,6 +159,7 @@ Flat repo — all .py modules in root. Subfolders only for data (cache).
 | viz.py | Shot maps, xG race, role percentile bars, percentile radar |
 | analysis.py | Opponent tiers (Level 2), roles, role fit, on/off impact (Level 3) |
 | facts.py | Deterministic fact sheets + validator for the LLM narrative |
+| report.py | Self-contained HTML reports (team, opponent, match) for Tab Report |
 | smoke_test.py | Live end-to-end check of the FotMob pipeline per league/season |
 | tests/ | Offline pytest suite on saved FotMob fixtures (tests/fixtures/fotmob) |
 | llm.py | Fact-grounded narrative: Ollama local (default) + Claude API backup |
@@ -228,6 +231,8 @@ third of Serie A — opponents move through midfield with minimal resistance."
 - Tab Confronti: players of one role (up to 4, overlaid percentile radar,
   per-90 values, league leaderboard by role fit) and team vs team (metrics
   side by side with winner, opponent-type tiers).
+- Tab Report: HTML export (team / opponent / match) with embedded charts,
+  verified LLM text (optional) and the fact sheet; PDF via browser print.
 - Tab Partita: match report from FotMob (both teams' shots on one pitch,
   xG race, stats, top-rated players, big chances, LLM match story).
 - Narrative is fact-grounded (facts.py): code writes Italian facts with exact
