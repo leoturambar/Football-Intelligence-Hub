@@ -76,6 +76,35 @@ def build_squad_narrative(
     return PROMPTS["system_analyst"], user
 
 
+def build_opponent_brief(
+    team: str,
+    opponent: str,
+    stats_dict: dict,
+    league: str,
+    season: str,
+) -> tuple[str, str]:
+    """
+    Pre-match opponent report for *team*'s staff.
+
+    Returns (system, user) prompt tuple. Max 300 words, Italian.
+    """
+    user = (
+        f"Our team: {team}\n"
+        f"Next opponent: {opponent}\n"
+        f"Competition: {league} {season}\n\n"
+        f"DATA:\n{_fmt_stats(stats_dict)}\n\n"
+        "Write a pre-match opponent report (max 300 words) for our coaching staff:\n"
+        "1. How the opponent plays — style, shape, where their chances come from.\n"
+        "2. Where they are vulnerable — with specific metrics from the data.\n"
+        "3. How they have done against teams with a profile like ours.\n"
+        "4. Two concrete game-plan recommendations for us.\n\n"
+        "Every claim must cite a number from the DATA. Flag small samples "
+        "(fewer than 5 matches) explicitly. Only compare to the league where the "
+        "DATA gives a league rank or average. Write the whole report in Italian."
+    )
+    return PROMPTS["system_analyst"], user
+
+
 def build_sw_bullets(
     team: str,
     stats_dict: dict,

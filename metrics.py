@@ -103,6 +103,23 @@ def summarize(df: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def sample_note(n: int, short: bool = False) -> str:
+    """
+    Reliability note for a sample of n matches. Per-match xG and shot rates
+    stabilise slowly: under ~8 matches differences of 0.3–0.5 xG/partita are
+    within normal noise.
+    """
+    if n == 0:
+        return "—" if short else ""
+    if n < 3:
+        return "aneddotico" if short else (
+            f"Solo {n} partite: i numeri descrivono quanto successo, non una tendenza.")
+    if n < 8:
+        return "indicativo" if short else (
+            f"{n} partite: campione piccolo, differenze sotto ~0,4 xG/partita possono essere rumore.")
+    return "solido" if short else ""
+
+
 def record(df: pd.DataFrame) -> str:
     """'7V 2N 1P'."""
     counts = df["result"].value_counts() if len(df) else {}

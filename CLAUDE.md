@@ -218,6 +218,14 @@ third of Serie A — opponents move through midfield with minimal resistance."
 5. Tab Report — exportable deliverables (Italia post-mortem, scouting report,
    match report, formation comparison)
 
+### Status (2026-11-07)
+- Tab Squadra: Level 1 + Level 2 done on FotMob data (filters, comparisons,
+  league ranks, opponent-type splits in analysis.py, sample-size warnings).
+- Tab Avversario (added): next-opponent report — profile tiers, shot zones,
+  league S&W, record vs teams with our profile, LLM pre-match brief.
+- Local LLM (qwen2.5:14b) misreads payload numbers (e.g. wrong formation);
+  treat its narrative as a draft. Claude backend untested (no API credit).
+
 ---
 
 ## GitHub

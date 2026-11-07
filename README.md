@@ -66,7 +66,7 @@ football-intelligence-hub/
 ├── data_loader.py
 ├── metrics.py
 ├── viz.py
-├── analysis.py        # planned
+├── analysis.py
 ├── llm.py
 ├── data/
 ├── CLAUDE.md
